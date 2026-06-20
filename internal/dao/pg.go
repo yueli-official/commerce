@@ -12,6 +12,7 @@ import (
 	"platform/services/commerce/internal/model"
 )
 
+
 // PG wraps the GoFrame gdb handle.
 type PG struct{ db gdb.DB }
 
@@ -36,13 +37,13 @@ ON CONFLICT (site_key, external_id) DO UPDATE
       status      = EXCLUDED.status,
       updated_at  = now()
 RETURNING id`
-	var id string
-	if err := r.db.GetScan(ctx, &id, sql,
+	val, err := r.db.GetValue(ctx, sql,
 		p.ID, p.SiteKey, p.ExternalID, p.Kind, p.Title, p.PriceCents, p.Currency, p.Status,
-	); err != nil {
+	)
+	if err != nil {
 		return err
 	}
-	p.ID = id
+	p.ID = val.String()
 	return nil
 }
 
@@ -133,4 +134,48 @@ func (r *PG) EntitlementExists(ctx context.Context, sub, productID string) (bool
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// Transaction executes fn inside a database transaction.
+// If fn returns an error the transaction is rolled back; otherwise committed.
+func (r *PG) Transaction(ctx context.Context, fn func(ctx context.Context, tx gdb.TX) error) error {
+	return r.db.Transaction(ctx, fn)
+}
+
+// UpdateOrderStatusTx sets the order status inside an existing transaction.
+func (r *PG) UpdateOrderStatusTx(ctx context.Context, tx gdb.TX, orderID, status, providerTxID string, paidAt *gtime.Time) error {
+	data := g.Map{
+		"status":     status,
+		"updated_at": gtime.Now(),
+	}
+	if providerTxID != "" {
+		data["provider_tx_id"] = providerTxID
+	}
+	if paidAt != nil {
+		data["paid_at"] = paidAt
+	}
+	_, err := tx.Ctx(ctx).Model("orders").Where("id", orderID).Data(data).Update()
+	return err
+}
+
+// InsertEntitlementTx inserts an entitlement row inside an existing transaction.
+// Duplicate (sub, product_id) is silently ignored (ON CONFLICT DO NOTHING).
+func (r *PG) InsertEntitlementTx(ctx context.Context, tx gdb.TX, e *model.Entitlement) error {
+	if e.ID == "" {
+		e.ID = uuid.NewString()
+	}
+	sql := `
+INSERT INTO entitlements (id, sub, product_id, source, order_id, expires_at)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT (sub, product_id) DO NOTHING`
+	var orderID interface{}
+	if e.OrderID != nil {
+		orderID = *e.OrderID
+	}
+	var expiresAt interface{}
+	if e.ExpiresAt != nil {
+		expiresAt = e.ExpiresAt
+	}
+	_, err := tx.Ctx(ctx).Exec(sql, e.ID, e.Sub, e.ProductID, e.Source, orderID, expiresAt)
+	return err
 }
