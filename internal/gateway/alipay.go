@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -107,12 +108,15 @@ func (p *alipayProvider) VerifyNotify(_ context.Context, body []byte, _ map[stri
 
 	status := notify.TradeStatus
 	if status == alipay.TradeStatusSuccess || status == alipay.TradeStatusFinished {
-		amount, _ := strconv.ParseFloat(notify.TotalAmount, 64)
+		amount, err := strconv.ParseFloat(notify.TotalAmount, 64)
+		if err != nil {
+			return nil, fmt.Errorf("alipay notify amount parse %q: %w", notify.TotalAmount, err)
+		}
 		return &NotifyOut{
 			Success:      true,
 			OrderNo:      notify.OutTradeNo,
 			ProviderTxID: notify.TradeNo,
-			AmountCents:  int(amount * 100),
+			AmountCents:  int(math.Round(amount * 100)),
 		}, nil
 	}
 	return &NotifyOut{Success: false}, nil

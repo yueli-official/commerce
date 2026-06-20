@@ -7,7 +7,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -156,5 +155,5 @@ func TestCreatePayment_ProducesRedirectURL(t *testing.T) {
 	if !strings.Contains(payURL, "alipay") {
 		t.Errorf("payURL %q does not contain expected alipay gateway host", payURL)
 	}
-	fmt.Printf("CreatePayment offline URL (first 120 chars): %.120s...\n", payURL)
+	t.Logf("CreatePayment offline URL (first 120 chars): %.120s...", payURL)
 }
