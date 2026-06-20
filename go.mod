@@ -1,12 +1,13 @@
 module platform/services/commerce
 
-go 1.23.0
+go 1.25.0
 
 require (
 	github.com/gogf/gf/contrib/drivers/pgsql/v2 v2.10.2
 	github.com/gogf/gf/v2 v2.10.2
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.10.9
+	github.com/smartwalle/alipay/v3 v3.2.25
 	platform/gokit v0.0.0
 )
 
@@ -29,6 +30,9 @@ require (
 	github.com/olekukonko/ll v0.0.9 // indirect
 	github.com/olekukonko/tablewriter v1.1.0 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
+	github.com/smartwalle/ncrypto v1.0.4 // indirect
+	github.com/smartwalle/ngx v1.0.9 // indirect
+	github.com/smartwalle/nsign v1.0.9 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/otel v1.38.0 // indirect
 	go.opentelemetry.io/otel/metric v1.38.0 // indirect
