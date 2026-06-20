@@ -1,0 +1,29 @@
+server:
+  address: "127.0.0.1:8084"
+  openapiPath: "/api.json"
+  swaggerPath: "/swagger"
+logger:
+  level: "info"
+  stdout: true
+database:
+  default:
+    type: "pgsql"
+    link: ""   # override: GF_DATABASE_DEFAULT_LINK=pgsql:user:pass@tcp(127.0.0.1:5432)/commerce
+
+commerce:
+  # IdP JWKS for access-token verification (gokit/authjwt). Lazy-fetched.
+  jwks:
+    url: "http://localhost:8081/oauth2/jwks.json"
+    issuer: "http://localhost:8081"
+    audience: ""            # "" disables the audience check
+
+  devSettle: false          # true → auto-settle orders without real payment (dev only)
+  gateways: [alipay]
+
+  alipay:
+    app_id: ""
+    private_key: ""
+    alipay_public_key: ""
+    sandbox: true
+    notify_url: ""
+    return_url: ""
