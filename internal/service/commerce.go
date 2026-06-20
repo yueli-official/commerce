@@ -150,6 +150,25 @@ func (s *Service) MarkPaid(ctx context.Context, orderNo, providerTxID string, am
 	})
 }
 
+// CancelOrder transitions an order from "pending" or "paying" to "cancelled".
+// It is intentionally lenient: if the order is already in a terminal state
+// (paid, cancelled) or does not exist, it returns nil (safe to call best-effort).
+func (s *Service) CancelOrder(ctx context.Context, orderNo string) error {
+	o, err := s.db.GetOrderByNo(ctx, orderNo)
+	if err != nil {
+		return err
+	}
+	if o == nil {
+		// Order not found — nothing to cancel.
+		return nil
+	}
+	if o.Status != model.OrderStatusPending && o.Status != model.OrderStatusPaying {
+		// Already in a terminal state; no-op.
+		return nil
+	}
+	return s.db.UpdateOrderStatus(ctx, o.ID, model.OrderStatusCancelled)
+}
+
 // GetOrderByNo returns the order with the given order number, or an error if not found.
 // Used by the dev-settle endpoint to retrieve the order's recorded amount.
 func (s *Service) GetOrderByNo(ctx context.Context, orderNo string) (*model.Order, error) {

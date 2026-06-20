@@ -345,6 +345,60 @@ func TestEntitled_OK(t *testing.T) {
 	}
 }
 
+// TestCancelOrder_PendingOrder verifies that CancelOrder transitions a pending
+// order to cancelled.
+func TestCancelOrder_PendingOrder(t *testing.T) {
+	svc, pg, ctx := newSvc(t)
+	o, _, err := svc.CreateOrder(ctx, uid("sub-cancel1"), service.OrderDesc{
+		SiteKey: "resource", ExternalID: uid("ext-cancel1"),
+		Kind: "paid", Title: "T", Currency: "CNY", PriceCents: 500,
+	})
+	if err != nil {
+		t.Fatalf("CreateOrder: %v", err)
+	}
+	if err := svc.CancelOrder(ctx, o.OrderNo); err != nil {
+		t.Fatalf("CancelOrder: %v", err)
+	}
+	// Reload from DB and verify status.
+	loaded, err := pg.GetOrderByNo(ctx, o.OrderNo)
+	if err != nil {
+		t.Fatalf("GetOrderByNo: %v", err)
+	}
+	if loaded.Status != model.OrderStatusCancelled {
+		t.Errorf("order status = %q after CancelOrder, want cancelled", loaded.Status)
+	}
+}
+
+// TestCancelOrder_IdempotentOnTerminalState verifies that CancelOrder on an
+// already-paid order is a safe no-op (returns nil).
+func TestCancelOrder_IdempotentOnTerminalState(t *testing.T) {
+	svc, pg, ctx := newSvc(t)
+	o, _, err := svc.CreateOrder(ctx, uid("sub-cancel2"), service.OrderDesc{
+		SiteKey: "resource", ExternalID: uid("ext-cancel2"),
+		Kind: "paid", Title: "T", Currency: "CNY", PriceCents: 700,
+	})
+	if err != nil {
+		t.Fatalf("CreateOrder: %v", err)
+	}
+	if err := svc.SetPaying(ctx, o.OrderNo); err != nil {
+		t.Fatalf("SetPaying: %v", err)
+	}
+	if err := svc.MarkPaid(ctx, o.OrderNo, "tx-cancel2", 700); err != nil {
+		t.Fatalf("MarkPaid: %v", err)
+	}
+	// CancelOrder on a paid order must be a no-op.
+	if err := svc.CancelOrder(ctx, o.OrderNo); err != nil {
+		t.Fatalf("CancelOrder on paid order (should be no-op): %v", err)
+	}
+	loaded, err := pg.GetOrderByNo(ctx, o.OrderNo)
+	if err != nil {
+		t.Fatalf("GetOrderByNo: %v", err)
+	}
+	if loaded.Status != model.OrderStatusPaid {
+		t.Errorf("order status = %q after no-op CancelOrder, want paid", loaded.Status)
+	}
+}
+
 // TestOrderNo_Format verifies NewOrderNo produces valid Alipay out_trade_no values.
 func TestOrderNo_Format(t *testing.T) {
 	for i := 0; i < 100; i++ {

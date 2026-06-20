@@ -10,12 +10,12 @@ import "github.com/gogf/gf/v2/frame/g"
 // CreateOrderReq is the request body for CreateOrder.
 type CreateOrderReq struct {
 	g.Meta     `path:"/api/v1/orders" method:"POST" tags:"Commerce" summary:"Create an order and return a payment URL"`
-	SiteKey    string `json:"siteKey"     v:"required"`
-	ExternalID string `json:"externalId"  v:"required"`
+	SiteKey    string `json:"siteKey"     v:"required|length:1,128"`
+	ExternalID string `json:"externalId"  v:"required|length:1,128"`
 	Kind       string `json:"kind"        v:"required"`
 	PriceCents int    `json:"priceCents"  v:"required|min:1"`
-	Title      string `json:"title"       v:"required"`
-	Currency   string `json:"currency"    v:"required"`
+	Title      string `json:"title"       v:"required|length:1,200"`
+	Currency   string `json:"currency"    v:"required|in:CNY"`
 }
 
 // CreateOrderRes is the response body for CreateOrder.

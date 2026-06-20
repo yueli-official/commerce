@@ -23,6 +23,7 @@ type AlipayConfig struct {
 // alipayProvider implements PaymentGateway using the Alipay page-pay flow.
 type alipayProvider struct {
 	client *alipay.Client
+	appID  string // configured merchant app_id; verified against every notify
 }
 
 // NewAlipayProvider constructs an alipayProvider from the given config.
@@ -40,7 +41,7 @@ func NewAlipayProvider(cfg AlipayConfig) (PaymentGateway, error) {
 	if err := client.LoadAliPayPublicKey(publicKey); err != nil {
 		return nil, fmt.Errorf("load alipay public key: %w", err)
 	}
-	return &alipayProvider{client: client}, nil
+	return &alipayProvider{client: client, appID: cfg.AppID}, nil
 }
 
 // normalizeAlipayKey strips PEM headers, whitespace, and literal \n sequences
@@ -68,6 +69,16 @@ func normalizeAlipayKey(key string) string {
 	key = strings.ReplaceAll(key, "\r", "")
 	key = strings.ReplaceAll(key, " ", "")
 	return key
+}
+
+// CheckNotifyAppID returns an error when the app_id carried in an Alipay
+// async-notify does not match the merchant's configured app_id.
+// Exported so it can be unit-tested in isolation without a fully-signed payload.
+func CheckNotifyAppID(notifyAppID, configuredAppID string) error {
+	if notifyAppID != configuredAppID {
+		return fmt.Errorf("alipay notify app_id mismatch: got %q, want %q", notifyAppID, configuredAppID)
+	}
+	return nil
 }
 
 // CreatePayment creates an Alipay page-pay session and returns the redirect URL.
@@ -104,6 +115,12 @@ func (p *alipayProvider) VerifyNotify(_ context.Context, body []byte, _ map[stri
 	notify, err := p.client.DecodeNotification(values)
 	if err != nil {
 		return nil, fmt.Errorf("alipay notify verify: %w", err)
+	}
+
+	// Defense-in-depth: ensure the notify targets our merchant app, not a
+	// different Alipay tenant whose signature happens to verify with our key.
+	if err := CheckNotifyAppID(notify.AppId, p.appID); err != nil {
+		return nil, err
 	}
 
 	status := notify.TradeStatus

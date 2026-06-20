@@ -31,6 +31,8 @@ func (c *Notify) Handle(r *ghttp.Request) {
 		return
 	}
 
+	// headers is reserved for future providers (e.g. WeChat Pay / PayPal) that
+	// carry their signatures in HTTP headers rather than the request body.
 	headers := make(map[string]string)
 	for k := range r.Header {
 		headers[k] = r.Header.Get(k)

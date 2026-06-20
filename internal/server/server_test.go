@@ -33,6 +33,7 @@ import (
 	"platform/gokit/authjwt"
 	"platform/services/commerce/internal/dao"
 	"platform/services/commerce/internal/gateway"
+	"platform/services/commerce/internal/model"
 	"platform/services/commerce/internal/server"
 )
 
@@ -55,6 +56,18 @@ type fakeGateway struct {
 	// successBodies maps raw body bytes to the NotifyOut to return.
 	// When nil, any body with the sentinel prefix triggers success.
 	successBody []byte
+}
+
+// failingGateway always returns an error from CreatePayment, simulating a
+// gateway outage.  Used to test the order-cancel-on-failure path.
+type failingGateway struct{}
+
+func (f *failingGateway) CreatePayment(_ context.Context, _ gateway.CreateIn) (string, error) {
+	return "", fmt.Errorf("simulated gateway failure")
+}
+
+func (f *failingGateway) VerifyNotify(_ context.Context, _ []byte, _ map[string]string) (*gateway.NotifyOut, error) {
+	return nil, fmt.Errorf("simulated gateway failure")
 }
 
 func (f *fakeGateway) CreatePayment(_ context.Context, in gateway.CreateIn) (string, error) {
@@ -118,9 +131,13 @@ func signToken(t *gtest.T, priv *rsa.PrivateKey, sub string) string {
 var serverSeq int
 
 func newTestServer(t *gtest.T, db *dao.PG, fake *fakeGateway, v *authjwt.Verifier, devSettle bool) *ghttp.Server {
+	return newTestServerWithGW(t, db, fake, v, devSettle)
+}
+
+func newTestServerWithGW(t *gtest.T, db *dao.PG, gw gateway.PaymentGateway, v *authjwt.Verifier, devSettle bool) *ghttp.Server {
 	serverSeq++
 	name := fmt.Sprintf("%s-%d", t.Name(), serverSeq)
-	reg := gateway.Registry{"alipay": fake}
+	reg := gateway.Registry{"alipay": gw}
 	s := g.Server(name)
 	s.SetAddr("127.0.0.1:0")
 	server.Configure(s, server.Deps{
@@ -325,5 +342,116 @@ func TestCommerceHTTP(t *testing.T) {
 		t.AssertNil(err)
 		defer sr.Close()
 		t.Assert(sr.StatusCode, 404)
+	})
+}
+
+// TestCreateOrder_InputValidation verifies that over-long Title or non-CNY
+// currency returns 400 (not 502 or 200).
+func TestCreateOrder_InputValidation(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		db := pgSetup(t)
+		ctx := context.Background()
+
+		priv, err := rsa.GenerateKey(rand.Reader, 2048)
+		t.AssertNil(err)
+		v := mustVerifier(t, priv)
+		aliceToken := signToken(t, priv, testSubAlice)
+
+		s := newTestServer(t, db, &fakeGateway{}, v, false)
+		defer s.Shutdown()
+		base := prefix(s)
+
+		authC := g.Client()
+		authC.SetPrefix(base)
+		authC.SetHeader("Authorization", "Bearer "+aliceToken)
+		authC.SetHeader("Content-Type", "application/json")
+
+		cases := []struct {
+			name string
+			body string
+		}{
+			{
+				name: "title too long (>200 chars)",
+				body: fmt.Sprintf(`{"siteKey":"resource","externalId":"val-001","kind":"paid","priceCents":100,"title":%q,"currency":"CNY"}`,
+					string(make([]byte, 201))),
+			},
+			{
+				name: "non-CNY currency",
+				body: `{"siteKey":"resource","externalId":"val-002","kind":"paid","priceCents":100,"title":"T","currency":"USD"}`,
+			},
+			{
+				name: "empty currency",
+				body: `{"siteKey":"resource","externalId":"val-003","kind":"paid","priceCents":100,"title":"T","currency":""}`,
+			},
+		}
+
+		for _, tc := range cases {
+			tc := tc
+			t.T.Run(tc.name, func(tt *testing.T) {
+				resp, err := authC.Post(ctx, "/api/v1/orders", tc.body)
+				if err != nil {
+					tt.Fatalf("POST: %v", err)
+				}
+				defer resp.Close()
+				if resp.StatusCode != 400 {
+					tt.Errorf("status = %d, want 400 for %q", resp.StatusCode, tc.name)
+				}
+			})
+		}
+	})
+}
+
+// TestCreateOrder_GatewayFailure_OrderCancelled verifies that when the payment
+// gateway's CreatePayment returns an error, the pending order is transitioned
+// to "cancelled" rather than left as an orphan.
+func TestCreateOrder_GatewayFailure_OrderCancelled(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		db := pgSetup(t)
+		ctx := context.Background()
+
+		priv, err := rsa.GenerateKey(rand.Reader, 2048)
+		t.AssertNil(err)
+		v := mustVerifier(t, priv)
+		aliceToken := signToken(t, priv, testSubAlice)
+
+		// Use the failing gateway so CreatePayment always errors.
+		s := newTestServerWithGW(t, db, &failingGateway{}, v, false)
+		defer s.Shutdown()
+		base := prefix(s)
+
+		authC := g.Client()
+		authC.SetPrefix(base)
+		authC.SetHeader("Authorization", "Bearer "+aliceToken)
+		authC.SetHeader("Content-Type", "application/json")
+
+		createBody := `{"siteKey":"resource","externalId":"gw-fail-001","kind":"paid","priceCents":9900,"title":"Test","currency":"CNY"}`
+		resp, err := authC.Post(ctx, "/api/v1/orders", createBody)
+		t.AssertNil(err)
+		defer resp.Close()
+
+		// Client must see 502 gateway_failed.
+		t.Assert(resp.StatusCode, 502)
+		j := gjson.New(resp.ReadAllString())
+		t.Assert(j.Get("code").String(), "commerce.gateway_failed")
+
+		// The pending order must now be cancelled (not left as orphan).
+		// Open a raw sql.DB to verify the row directly.
+		host := envOr("COMMERCE_PG_HOST", "")
+		port := envOr("COMMERCE_PG_PORT", "5432")
+		user := envOr("COMMERCE_PG_USER", "postgres")
+		pass := envOr("COMMERCE_PG_PASS", "")
+		rawDB, err2 := sql.Open("postgres", fmt.Sprintf(
+			"host=%s port=%s user=%s password=%s dbname=commerce sslmode=disable",
+			host, port, user, pass))
+		t.AssertNil(err2)
+		defer rawDB.Close()
+
+		var orderStatus string
+		row := rawDB.QueryRowContext(ctx,
+			`SELECT status FROM orders WHERE sub = $1 ORDER BY created_at DESC LIMIT 1`,
+			testSubAlice)
+		scanErr := row.Scan(&orderStatus)
+		t.AssertNil(scanErr)
+		t.Assert(orderStatus, model.OrderStatusCancelled)
 	})
 }

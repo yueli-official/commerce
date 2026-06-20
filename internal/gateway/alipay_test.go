@@ -118,6 +118,27 @@ func TestVerifyNotify_InvalidSignature(t *testing.T) {
 	}
 }
 
+// TestCheckNotifyAppID_Mismatch verifies that checkNotifyAppID rejects a
+// notification whose app_id does not match the configured merchant app_id.
+// This exercises the defense-in-depth guard in VerifyNotify without requiring
+// a fully-signed payload (constructing such a payload offline is impractical).
+func TestCheckNotifyAppID_Mismatch(t *testing.T) {
+	err := gateway.CheckNotifyAppID("attacker_app_id", "merchant_app_id")
+	if err == nil {
+		t.Fatal("expected error for mismatched app_id, got nil")
+	}
+	if !strings.Contains(err.Error(), "app_id mismatch") {
+		t.Errorf("error message %q does not mention app_id mismatch", err.Error())
+	}
+}
+
+// TestCheckNotifyAppID_Match verifies that checkNotifyAppID accepts a matching app_id.
+func TestCheckNotifyAppID_Match(t *testing.T) {
+	if err := gateway.CheckNotifyAppID("my_app_id", "my_app_id"); err != nil {
+		t.Fatalf("expected nil for matching app_id, got %v", err)
+	}
+}
+
 // TestCreatePayment_ProducesRedirectURL constructs an alipay provider with a
 // throwaway RSA key (no real Alipay creds), calls CreatePayment, and asserts
 // the returned URL is non-empty and points to an Alipay gateway host.

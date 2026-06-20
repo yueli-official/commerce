@@ -2,6 +2,8 @@
 package main
 
 import (
+	"log"
+
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gctx"
 
@@ -47,6 +49,18 @@ func main() {
 	}
 
 	devSettle := g.Cfg().MustGet(ctx, "commerce.devSettle").Bool()
+
+	// Prod-safety guard: devSettle backdoor must never reach a real Alipay endpoint.
+	if devSettle {
+		if alipayCfg.AppID != "" && !alipayCfg.Sandbox {
+			// Non-sandbox Alipay config with devSettle enabled — refuse to start.
+			log.Fatal("FATAL: commerce.devSettle=true but Alipay is configured for production (sandbox=false). " +
+				"The devSettle backdoor must not be enabled against non-sandbox Alipay. Aborting.")
+		}
+		g.Log().Warning(ctx, "WARNING: commerce.devSettle=true — dev-only settle backdoor is active. "+
+			"Never enable this in production.")
+	}
+
 	notifyURL := alipayCfg.NotifyURL
 	returnURL := alipayCfg.ReturnURL
 

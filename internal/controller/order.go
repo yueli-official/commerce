@@ -5,6 +5,7 @@ package controller
 import (
 	"context"
 
+	"github.com/gogf/gf/v2/frame/g"
 	"platform/gokit/authjwt"
 	"platform/gokit/errs"
 	v1 "platform/services/commerce/api/v1"
@@ -53,6 +54,8 @@ func (c *Order) CreateOrder(ctx context.Context, req *v1.CreateOrderReq) (*v1.Cr
 
 	gw, ok := c.registry["alipay"]
 	if !ok {
+		g.Log().Errorf(ctx, "alipay gateway not registered for order %s", order.OrderNo)
+		cancelBestEffort(ctx, c.svc, order.OrderNo)
 		return nil, errs.New(commerceerr.CodeGatewayFailed, "alipay gateway not registered", nil)
 	}
 
@@ -64,10 +67,14 @@ func (c *Order) CreateOrder(ctx context.Context, req *v1.CreateOrderReq) (*v1.Cr
 		ReturnURL:   c.returnURL,
 	})
 	if err != nil {
+		g.Log().Errorf(ctx, "alipay CreatePayment failed for order %s: %+v", order.OrderNo, err)
+		cancelBestEffort(ctx, c.svc, order.OrderNo)
 		return nil, errs.New(commerceerr.CodeGatewayFailed, "payment gateway error", nil)
 	}
 
 	if err := c.svc.SetPaying(ctx, order.OrderNo); err != nil {
+		g.Log().Errorf(ctx, "SetPaying failed for order %s: %+v", order.OrderNo, err)
+		cancelBestEffort(ctx, c.svc, order.OrderNo)
 		return nil, err
 	}
 
@@ -75,4 +82,13 @@ func (c *Order) CreateOrder(ctx context.Context, req *v1.CreateOrderReq) (*v1.Cr
 		OrderNo: order.OrderNo,
 		PayURL:  payURL,
 	}, nil
+}
+
+// cancelBestEffort cancels the order on a best-effort basis (gateway failure path).
+// If cancellation fails it logs the error but does NOT propagate it — the caller
+// already has a gateway error to return to the client.
+func cancelBestEffort(ctx context.Context, svc *service.Service, orderNo string) {
+	if err := svc.CancelOrder(ctx, orderNo); err != nil {
+		g.Log().Errorf(ctx, "failed to cancel orphan order %s after gateway failure: %+v", orderNo, err)
+	}
 }
