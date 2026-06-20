@@ -27,18 +27,19 @@ func (r *PG) UpsertProduct(ctx context.Context, p *model.Product) error {
 		p.ID = uuid.NewString()
 	}
 	sql := `
-INSERT INTO products (id, site_key, external_id, kind, title, price_cents, currency, status)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO products (id, site_key, external_id, kind, title, price_cents, points_cost, currency, status)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (site_key, external_id) DO UPDATE
   SET kind        = EXCLUDED.kind,
       title       = EXCLUDED.title,
       price_cents = EXCLUDED.price_cents,
+      points_cost = EXCLUDED.points_cost,
       currency    = EXCLUDED.currency,
       status      = EXCLUDED.status,
       updated_at  = now()
 RETURNING id`
 	val, err := r.db.GetValue(ctx, sql,
-		p.ID, p.SiteKey, p.ExternalID, p.Kind, p.Title, p.PriceCents, p.Currency, p.Status,
+		p.ID, p.SiteKey, p.ExternalID, p.Kind, p.Title, p.PriceCents, p.PointsCost, p.Currency, p.Status,
 	)
 	if err != nil {
 		return err
@@ -213,4 +214,127 @@ ON CONFLICT (sub, product_id) DO NOTHING`
 	}
 	_, err := tx.Ctx(ctx).Exec(sql, e.ID, e.Sub, e.ProductID, e.Source, orderID, expiresAt)
 	return err
+}
+
+// ─── M2: check-in + credits ─────────────────────────────────────────────────
+
+// GetCheckin returns the check-in row for (sub, date YYYY-MM-DD), or (nil, nil).
+func (r *PG) GetCheckin(ctx context.Context, sub, date string) (*model.CheckinRecord, error) {
+	var rec *model.CheckinRecord
+	if err := r.db.Model("checkin_records").Ctx(ctx).
+		Where("sub", sub).Where("checkin_date", date).Limit(1).Scan(&rec); err != nil {
+		return nil, err
+	}
+	return rec, nil
+}
+
+// InsertCheckinTx inserts a check-in row inside a transaction. A same-day row
+// (uq sub, checkin_date) is ignored; returns whether a row was actually inserted
+// (false = a concurrent check-in won the race, caller must not double-earn).
+func (r *PG) InsertCheckinTx(ctx context.Context, tx gdb.TX, rec *model.CheckinRecord) (bool, error) {
+	sql := `
+INSERT INTO checkin_records (id, sub, checkin_date, streak, points_awarded)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT (sub, checkin_date) DO NOTHING`
+	res, err := tx.Ctx(ctx).Exec(sql, uuid.NewString(), rec.Sub, rec.CheckinDate, rec.Streak, rec.PointsAwarded)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// GetBalance returns the subscriber's points balance (0 if no row).
+func (r *PG) GetBalance(ctx context.Context, sub string) (int64, error) {
+	v, err := r.db.Model("credits_balances").Ctx(ctx).
+		Where("sub", sub).Fields("balance").Value()
+	if err != nil {
+		return 0, err
+	}
+	return v.Int64(), nil
+}
+
+// EarnCreditsTx credits delta points to sub inside a transaction: upserts the
+// balance and appends a ledger row.
+func (r *PG) EarnCreditsTx(ctx context.Context, tx gdb.TX, sub string, delta int, source, ref string) error {
+	if _, err := tx.Ctx(ctx).Exec(`
+INSERT INTO credits_balances (sub, balance) VALUES (?, ?)
+ON CONFLICT (sub) DO UPDATE SET balance = credits_balances.balance + EXCLUDED.balance, updated_at = now()`,
+		sub, delta); err != nil {
+		return err
+	}
+	return r.insertLedgerTx(ctx, tx, sub, delta, source, ref)
+}
+
+// SpendCreditsTx debits amount points from sub inside a transaction, guarding
+// against overspend: the balance is decremented only WHERE balance >= amount.
+// Returns false (no ledger row written) when the balance is insufficient.
+func (r *PG) SpendCreditsTx(ctx context.Context, tx gdb.TX, sub string, amount int, source, ref string) (bool, error) {
+	res, err := tx.Ctx(ctx).Exec(`
+UPDATE credits_balances SET balance = balance - ?, updated_at = now()
+WHERE sub = ? AND balance >= ?`, amount, sub, amount)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n == 0 {
+		return false, nil // insufficient balance (or no balance row)
+	}
+	if err := r.insertLedgerTx(ctx, tx, sub, -amount, source, ref); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (r *PG) insertLedgerTx(ctx context.Context, tx gdb.TX, sub string, delta int, source, ref string) error {
+	_, err := tx.Ctx(ctx).Exec(
+		`INSERT INTO credits_ledger (id, sub, delta, source, ref) VALUES (?, ?, ?, ?, ?)`,
+		uuid.NewString(), sub, delta, source, ref)
+	return err
+}
+
+// ListLedger returns a subscriber's ledger entries (newest first) plus the total.
+func (r *PG) ListLedger(ctx context.Context, sub string, limit, offset int) ([]model.LedgerEntry, int, error) {
+	m := r.db.Model("credits_ledger").Ctx(ctx).Where("sub", sub)
+	total, err := m.Clone().Count()
+	if err != nil {
+		return nil, 0, err
+	}
+	var entries []model.LedgerEntry
+	if err := m.Order("created_at DESC").Limit(offset, limit).Scan(&entries); err != nil {
+		return nil, 0, err
+	}
+	return entries, total, nil
+}
+
+// GrantEntitlementTx inserts an entitlement inside a transaction, returning
+// whether a row was actually inserted (false = the subscriber already owns it).
+// The points-redemption path keys idempotency on this: it spends points only
+// when the grant is fresh, so a repeat redeem never double-charges.
+func (r *PG) GrantEntitlementTx(ctx context.Context, tx gdb.TX, e *model.Entitlement) (bool, error) {
+	if e.ID == "" {
+		e.ID = uuid.NewString()
+	}
+	var orderID interface{}
+	if e.OrderID != nil {
+		orderID = *e.OrderID
+	}
+	res, err := tx.Ctx(ctx).Exec(`
+INSERT INTO entitlements (id, sub, product_id, source, order_id)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT (sub, product_id) DO NOTHING`, e.ID, e.Sub, e.ProductID, e.Source, orderID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }

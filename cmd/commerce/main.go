@@ -73,6 +73,7 @@ func main() {
 		NotifyURL: notifyURL,
 		ReturnURL: returnURL,
 		DevSettle: devSettle,
+		Checkin:   appconfig.LoadCheckin(ctx),
 	})
 	g.Log().Info(ctx, "commerce-service starting")
 	s.Run()

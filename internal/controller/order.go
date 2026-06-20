@@ -11,6 +11,7 @@ import (
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/gateway"
+	"platform/services/commerce/internal/model"
 	"platform/services/commerce/internal/service"
 )
 
@@ -30,7 +31,9 @@ func NewOrder(svc *service.Service, reg gateway.Registry, notifyURL, returnURL s
 	return &Order{svc: svc, registry: reg, notifyURL: notifyURL, returnURL: returnURL}
 }
 
-// CreateOrder handles POST /api/v1/orders (user JWT required).
+// CreateOrder handles POST /api/v1/orders (user JWT required). A `paid` order
+// goes through the payment gateway and returns a payUrl; a `points` order is
+// redeemed synchronously (spend points → grant entitlement) and returns entitled.
 func (c *Order) CreateOrder(ctx context.Context, req *v1.CreateOrderReq) (*v1.CreateOrderRes, error) {
 	p, ok := authjwt.From(ctx)
 	if !ok || p == nil {
@@ -45,6 +48,28 @@ func (c *Order) CreateOrder(ctx context.Context, req *v1.CreateOrderReq) (*v1.Cr
 		Title:      req.Title,
 		Currency:   req.Currency,
 		PriceCents: req.PriceCents,
+		PointsCost: req.PointsCost,
+	}
+
+	// Points redemption: no gateway, synchronous spend → grant.
+	if req.Kind == model.ProductKindPoints {
+		if req.PointsCost < 1 {
+			return nil, commerceerr.InvalidRequest("pointsCost is required for a points order")
+		}
+		r, err := c.svc.Redeem(ctx, sub, desc)
+		if err != nil {
+			return nil, err
+		}
+		bal := int(r.Balance)
+		return &v1.CreateOrderRes{Entitled: r.Entitled, Balance: &bal}, nil
+	}
+
+	// Paid order: validate price + currency, then go through the gateway.
+	if req.PriceCents < 1 {
+		return nil, commerceerr.InvalidRequest("priceCents is required for a paid order")
+	}
+	if req.Currency != "CNY" {
+		return nil, commerceerr.InvalidRequest("currency must be CNY")
 	}
 
 	order, _, err := c.svc.CreateOrder(ctx, sub, desc)

@@ -35,6 +35,7 @@ import (
 	"platform/services/commerce/internal/gateway"
 	"platform/services/commerce/internal/model"
 	"platform/services/commerce/internal/server"
+	"platform/services/commerce/internal/service"
 )
 
 // ─── test constants ──────────────────────────────────────────────────────────
@@ -147,6 +148,7 @@ func newTestServerWithGW(t *gtest.T, db *dao.PG, gw gateway.PaymentGateway, v *a
 		NotifyURL: "http://localhost:8084/api/v1/payments/alipay/notify",
 		ReturnURL: "http://localhost:3000/pay/return",
 		DevSettle: devSettle,
+		Checkin:   service.CheckinConfig{Base: 10, Step: 2, Cap: 30},
 	})
 	s.SetDumpRouterMap(false)
 	s.Start()
@@ -183,10 +185,17 @@ func pgSetup(t *gtest.T) *dao.PG {
 	t.AssertNil(err)
 	migration, err := os.ReadFile("../../manifest/sql/migrations/0001_init.up.sql")
 	t.AssertNil(err)
+	migration2, err := os.ReadFile("../../manifest/sql/migrations/0002_credits_checkin.up.sql")
+	t.AssertNil(err)
+	_, _ = cdb.Exec("DROP TABLE IF EXISTS checkin_records CASCADE")
+	_, _ = cdb.Exec("DROP TABLE IF EXISTS credits_ledger CASCADE")
+	_, _ = cdb.Exec("DROP TABLE IF EXISTS credits_balances CASCADE")
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS entitlements CASCADE")
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS orders CASCADE")
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS products CASCADE")
 	_, err = cdb.Exec(string(migration))
+	t.AssertNil(err)
+	_, err = cdb.Exec(string(migration2))
 	t.AssertNil(err)
 	cdb.Close()
 
@@ -453,5 +462,120 @@ func TestCreateOrder_GatewayFailure_OrderCancelled(t *testing.T) {
 		scanErr := row.Scan(&orderStatus)
 		t.AssertNil(scanErr)
 		t.Assert(orderStatus, model.OrderStatusCancelled)
+	})
+}
+
+// TestCommerceM2_CheckinAndPoints exercises the M2 points economy end-to-end:
+// daily check-in earns the streak reward, the balance/ledger reflect it, and a
+// points redemption spends the balance to grant an entitlement (idempotent),
+// while an unaffordable redemption is refused without charging.
+func TestCommerceM2_CheckinAndPoints(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		db := pgSetup(t)
+		ctx := context.Background()
+
+		priv, err := rsa.GenerateKey(rand.Reader, 2048)
+		t.AssertNil(err)
+		v := mustVerifier(t, priv)
+		aliceToken := signToken(t, priv, testSubAlice)
+
+		s := newTestServer(t, db, &fakeGateway{}, v, false)
+		defer s.Shutdown()
+		base := prefix(s)
+
+		authC := g.Client()
+		authC.SetPrefix(base)
+		authC.SetHeader("Authorization", "Bearer "+aliceToken)
+		authC.SetHeader("Content-Type", "application/json")
+
+		// ── 1. First check-in today → streak 1, base reward 10, balance 10 ──────
+		ci, err := authC.Post(ctx, "/api/v1/checkin", nil)
+		t.AssertNil(err)
+		jci := gjson.New(ci.ReadAllString())
+		ci.Close()
+		t.Assert(jci.Get("data.alreadyCheckedIn").Bool(), false)
+		t.Assert(jci.Get("data.streak").Int(), 1)
+		t.Assert(jci.Get("data.pointsAwarded").Int(), 10)
+		t.Assert(jci.Get("data.balance").Int(), 10)
+
+		// ── 2. Status reflects today's check-in (no mutation) ──────────────────
+		st, err := authC.Get(ctx, "/api/v1/checkin/status")
+		t.AssertNil(err)
+		jst := gjson.New(st.ReadAllString())
+		st.Close()
+		t.Assert(jst.Get("data.checkedInToday").Bool(), true)
+		t.Assert(jst.Get("data.streak").Int(), 1)
+		t.Assert(jst.Get("data.balance").Int(), 10)
+
+		// ── 3. Second check-in same day → idempotent, no double-earn ───────────
+		ci2, err := authC.Post(ctx, "/api/v1/checkin", nil)
+		t.AssertNil(err)
+		jci2 := gjson.New(ci2.ReadAllString())
+		ci2.Close()
+		t.Assert(jci2.Get("data.alreadyCheckedIn").Bool(), true)
+		t.Assert(jci2.Get("data.balance").Int(), 10)
+
+		// ── 4. Balance + ledger ────────────────────────────────────────────────
+		bal, err := authC.Get(ctx, "/api/v1/credits/balance")
+		t.AssertNil(err)
+		t.Assert(gjson.New(bal.ReadAllString()).Get("data.balance").Int(), 10)
+		bal.Close()
+
+		led, err := authC.Get(ctx, "/api/v1/credits/ledger")
+		t.AssertNil(err)
+		jled := gjson.New(led.ReadAllString())
+		led.Close()
+		t.Assert(jled.Get("data.total").Int(), 1)
+		t.Assert(jled.Get("data.entries.0.delta").Int(), 10)
+		t.Assert(jled.Get("data.entries.0.source").String(), "checkin")
+
+		// ── 5. Points redeem (cost 5 ≤ balance 10) → entitled, balance 5 ───────
+		redeemBody := `{"siteKey":"resource","externalId":"pts-1","kind":"points","pointsCost":5,"title":"Points Resource"}`
+		rd, err := authC.Post(ctx, "/api/v1/orders", redeemBody)
+		t.AssertNil(err)
+		jrd := gjson.New(rd.ReadAllString())
+		rd.Close()
+		t.Assert(jrd.Get("code").String(), "ok")
+		t.Assert(jrd.Get("data.entitled").Bool(), true)
+		t.Assert(jrd.Get("data.balance").Int(), 5)
+
+		// access for the redeemed product → entitled
+		acc, err := authC.Get(ctx, "/api/v1/access?siteKey=resource&externalId=pts-1")
+		t.AssertNil(err)
+		jacc := gjson.New(acc.ReadAllString())
+		acc.Close()
+		t.Assert(jacc.Get("data.entitled").Bool(), true)
+		t.Assert(jacc.Get("data.reason").String(), "ok")
+
+		// ── 6. Redeem again (idempotent) → still entitled, balance unchanged ───
+		rd2, err := authC.Post(ctx, "/api/v1/orders", redeemBody)
+		t.AssertNil(err)
+		jrd2 := gjson.New(rd2.ReadAllString())
+		rd2.Close()
+		t.Assert(jrd2.Get("data.entitled").Bool(), true)
+		t.Assert(jrd2.Get("data.balance").Int(), 5) // no double-spend
+
+		// ── 7. Unaffordable redeem → 402 insufficient_points, balance unchanged
+		bigBody := `{"siteKey":"resource","externalId":"pts-2","kind":"points","pointsCost":9999,"title":"Too Pricey"}`
+		rdx, err := authC.Post(ctx, "/api/v1/orders", bigBody)
+		t.AssertNil(err)
+		jrdx := gjson.New(rdx.ReadAllString())
+		t.Assert(rdx.StatusCode, 402)
+		rdx.Close()
+		t.Assert(jrdx.Get("code").String(), "commerce.insufficient_points")
+
+		balx, err := authC.Get(ctx, "/api/v1/credits/balance")
+		t.AssertNil(err)
+		t.Assert(gjson.New(balx.ReadAllString()).Get("data.balance").Int(), 5)
+		balx.Close()
+
+		// access for pts-2 → not entitled, reason insufficient_points + required.pointsCost
+		accx, err := authC.Get(ctx, "/api/v1/access?siteKey=resource&externalId=pts-2")
+		t.AssertNil(err)
+		jaccx := gjson.New(accx.ReadAllString())
+		accx.Close()
+		t.Assert(jaccx.Get("data.entitled").Bool(), false)
+		t.Assert(jaccx.Get("data.reason").String(), "insufficient_points")
+		t.Assert(jaccx.Get("data.required.pointsCost").Int(), 9999)
 	})
 }

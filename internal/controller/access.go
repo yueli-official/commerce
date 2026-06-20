@@ -36,10 +36,11 @@ func (c *Access) Entitled(ctx context.Context, req *v1.EntitledReq) (*v1.Entitle
 		Entitled: result.Entitled,
 		Reason:   result.Reason,
 	}
-	if result.Required.Kind != "" || result.Required.PriceCents != nil {
+	if result.Required.Kind != "" || result.Required.PriceCents != nil || result.Required.PointsCost != nil {
 		res.Required = &v1.RequiredFields{
 			Kind:       result.Required.Kind,
 			PriceCents: result.Required.PriceCents,
+			PointsCost: result.Required.PointsCost,
 		}
 	}
 	return res, nil

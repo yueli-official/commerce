@@ -6,6 +6,8 @@ import (
 	"context"
 
 	"github.com/gogf/gf/v2/frame/g"
+
+	"platform/services/commerce/internal/service"
 )
 
 // JWKS holds the IdP key/issuer config for the authjwt verifier.
@@ -21,6 +23,16 @@ func LoadJWKS(ctx context.Context) JWKS {
 		URL:      g.Cfg().MustGet(ctx, "commerce.jwks.url").String(),
 		Issuer:   g.Cfg().MustGet(ctx, "commerce.jwks.issuer").String(),
 		Audience: g.Cfg().MustGet(ctx, "commerce.jwks.audience").String(),
+	}
+}
+
+// LoadCheckin reads commerce.checkin.* (the daily check-in reward curve).
+// Defaults: base 10, +2 per consecutive day, capped at 30.
+func LoadCheckin(ctx context.Context) service.CheckinConfig {
+	return service.CheckinConfig{
+		Base: g.Cfg().MustGet(ctx, "commerce.checkin.base", 10).Int(),
+		Step: g.Cfg().MustGet(ctx, "commerce.checkin.step", 2).Int(),
+		Cap:  g.Cfg().MustGet(ctx, "commerce.checkin.cap", 30).Int(),
 	}
 }
 

@@ -20,6 +20,13 @@ commerce:
   devSettle: false          # true → auto-settle orders without real payment (dev only)
   gateways: [alipay]
 
+  # Daily check-in reward curve (M2): points for an N-day streak =
+  # base + (N-1)*step, capped at cap; a missed day resets the streak.
+  checkin:
+    base: 10
+    step: 2
+    cap: 30
+
   alipay:
     app_id: ""
     private_key: ""

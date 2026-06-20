@@ -19,14 +19,15 @@ type Deps struct {
 	Verifier  *authjwt.Verifier
 	DB        *dao.PG
 	Registry  gateway.Registry
-	NotifyURL string // base URL for the alipay notify callback
-	ReturnURL string // URL the buyer is sent to after paying
-	DevSettle bool   // when true, register the /dev/orders/{orderNo}/settle endpoint
+	NotifyURL string                // base URL for the alipay notify callback
+	ReturnURL string                // URL the buyer is sent to after paying
+	DevSettle bool                  // when true, register the /dev/orders/{orderNo}/settle endpoint
+	Checkin   service.CheckinConfig // daily check-in reward curve
 }
 
 // Configure mounts the commerce-service routes onto s.
 func Configure(s *ghttp.Server, d Deps) {
-	svc := service.New(d.DB)
+	svc := service.New(d.DB, d.Checkin)
 
 	// ── Public: liveness ────────────────────────────────────────────────────
 	s.Group("/", func(grp *ghttp.RouterGroup) {
@@ -53,10 +54,14 @@ func Configure(s *ghttp.Server, d Deps) {
 	// ── Protected: JWT-required routes ──────────────────────────────────────
 	orderCtrl := controller.NewOrder(svc, d.Registry, d.NotifyURL, d.ReturnURL)
 	accessCtrl := controller.NewAccess(svc)
+	checkinCtrl := controller.NewCheckin(svc)
+	creditsCtrl := controller.NewCredits(svc)
 	s.Group("/", func(grp *ghttp.RouterGroup) {
 		grp.Middleware(ghttpx.Middleware, authjwt.Middleware(d.Verifier))
 		grp.Bind(orderCtrl)
 		grp.Bind(accessCtrl)
+		grp.Bind(checkinCtrl)
+		grp.Bind(creditsCtrl)
 	})
 
 	// ── Dev-only: settle seam (conditionally registered) ────────────────────

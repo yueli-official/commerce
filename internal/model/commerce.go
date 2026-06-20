@@ -17,7 +17,28 @@ const (
 	ProductStatusInactive = "inactive"
 )
 
-// Product is a purchasable item tied to a site.
+// Product kind constants.
+const (
+	ProductKindPaid   = "paid"
+	ProductKindPoints = "points"
+)
+
+// Entitlement source constants.
+const (
+	EntitlementSourceOrder  = "order"  // paid purchase
+	EntitlementSourcePoints = "points" // points redemption
+	EntitlementSourceGrant  = "grant"  // admin/activity grant
+)
+
+// Credits ledger source constants.
+const (
+	CreditsSourceCheckin = "checkin"
+	CreditsSourceRedeem  = "redeem"
+	CreditsSourceGrant   = "grant"
+)
+
+// Product is a purchasable item tied to a site. A `paid` product is priced in
+// price_cents; a `points` product is priced in points_cost.
 type Product struct {
 	ID         string    `json:"id"         orm:"id"`
 	SiteKey    string    `json:"siteKey"    orm:"site_key"`
@@ -25,10 +46,31 @@ type Product struct {
 	Kind       string    `json:"kind"       orm:"kind"`
 	Title      string    `json:"title"      orm:"title"`
 	PriceCents int       `json:"priceCents" orm:"price_cents"`
+	PointsCost int       `json:"pointsCost" orm:"points_cost"`
 	Currency   string    `json:"currency"   orm:"currency"`
 	Status     string    `json:"status"     orm:"status"`
 	CreatedAt  time.Time `json:"createdAt"  orm:"created_at"`
 	UpdatedAt  time.Time `json:"updatedAt"  orm:"updated_at"`
+}
+
+// CheckinRecord is one subscriber's check-in on a given day.
+type CheckinRecord struct {
+	ID            string    `json:"id"            orm:"id"`
+	Sub           string    `json:"sub"           orm:"sub"`
+	CheckinDate   string    `json:"checkinDate"   orm:"checkin_date"`
+	Streak        int       `json:"streak"        orm:"streak"`
+	PointsAwarded int       `json:"pointsAwarded" orm:"points_awarded"`
+	CreatedAt     time.Time `json:"createdAt"     orm:"created_at"`
+}
+
+// LedgerEntry is one append-only points movement (+earn / -spend).
+type LedgerEntry struct {
+	ID        string    `json:"id"        orm:"id"`
+	Sub       string    `json:"sub"       orm:"sub"`
+	Delta     int       `json:"delta"     orm:"delta"`
+	Source    string    `json:"source"    orm:"source"`
+	Ref       string    `json:"ref"       orm:"ref"`
+	CreatedAt time.Time `json:"createdAt" orm:"created_at"`
 }
 
 // Order is a single purchase transaction.

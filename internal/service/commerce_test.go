@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	_ "github.com/gogf/gf/contrib/drivers/pgsql/v2"
@@ -52,11 +53,15 @@ func newDB(t *testing.T) gdb.DB {
 	return db
 }
 
-// resetSchema drops and re-creates the three commerce tables using 0001_init.up.sql.
+// resetSchema drops and re-creates the commerce tables from the migrations
+// (0001 base + 0002 credits/checkin).
 func resetSchema(t *testing.T, db gdb.DB) {
 	t.Helper()
 	ctx := context.Background()
 	for _, stmt := range []string{
+		"DROP TABLE IF EXISTS checkin_records",
+		"DROP TABLE IF EXISTS credits_ledger",
+		"DROP TABLE IF EXISTS credits_balances",
 		"DROP TABLE IF EXISTS entitlements",
 		"DROP TABLE IF EXISTS orders",
 		"DROP TABLE IF EXISTS products",
@@ -65,12 +70,17 @@ func resetSchema(t *testing.T, db gdb.DB) {
 			t.Fatalf("drop table: %v", err)
 		}
 	}
-	up, err := os.ReadFile("../../manifest/sql/migrations/0001_init.up.sql")
-	if err != nil {
-		t.Fatalf("read migration: %v", err)
-	}
-	if _, err := db.Exec(ctx, string(up)); err != nil {
-		t.Fatalf("apply migration: %v", err)
+	for _, f := range []string{
+		"../../manifest/sql/migrations/0001_init.up.sql",
+		"../../manifest/sql/migrations/0002_credits_checkin.up.sql",
+	} {
+		up, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read migration %s: %v", f, err)
+		}
+		if _, err := db.Exec(ctx, string(up)); err != nil {
+			t.Fatalf("apply migration %s: %v", f, err)
+		}
 	}
 }
 
@@ -81,7 +91,7 @@ func newSvc(t *testing.T) (*service.Service, *dao.PG, context.Context) {
 	db := newDB(t)
 	resetSchema(t, db)
 	pg := dao.NewPG(db)
-	svc := service.New(pg)
+	svc := service.New(pg, service.CheckinConfig{Base: 10, Step: 2, Cap: 30})
 	return svc, pg, context.Background()
 }
 
@@ -396,6 +406,41 @@ func TestCancelOrder_IdempotentOnTerminalState(t *testing.T) {
 	}
 	if loaded.Status != model.OrderStatusPaid {
 		t.Errorf("order status = %q after no-op CancelOrder, want paid", loaded.Status)
+	}
+}
+
+// TestCheckin_StreakProgression verifies the streak continues from yesterday and
+// the reward follows base + (streak-1)*step (12 on day 2 with base 10, step 2).
+func TestCheckin_StreakProgression(t *testing.T) {
+	svc, pg, ctx := newSvc(t)
+	sub := uid("streak-sub")
+	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+
+	// Seed yesterday's check-in (streak 1) directly.
+	if err := pg.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		_, e := pg.InsertCheckinTx(ctx, tx, &model.CheckinRecord{
+			Sub: sub, CheckinDate: yesterday, Streak: 1, PointsAwarded: 10,
+		})
+		return e
+	}); err != nil {
+		t.Fatalf("seed yesterday check-in: %v", err)
+	}
+
+	res, err := svc.Checkin(ctx, sub)
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+	if res.AlreadyCheckedIn {
+		t.Fatal("today's check-in reported alreadyCheckedIn")
+	}
+	if res.Streak != 2 {
+		t.Errorf("streak = %d, want 2", res.Streak)
+	}
+	if res.PointsAwarded != 12 {
+		t.Errorf("pointsAwarded = %d, want 12 (base 10 + 1*step 2)", res.PointsAwarded)
+	}
+	if res.Balance != 12 {
+		t.Errorf("balance = %d, want 12 (only today earned)", res.Balance)
 	}
 }
 

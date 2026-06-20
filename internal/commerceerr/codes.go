@@ -27,6 +27,13 @@ var (
 
 	// CodeNotifyInvalid is returned on signature failure, parse error, or amount mismatch.
 	CodeNotifyInvalid = errs.Register("commerce.notify_invalid", http.StatusBadRequest)
+
+	// CodeInsufficientPoints is returned when a points redemption exceeds the balance.
+	CodeInsufficientPoints = errs.Register("commerce.insufficient_points", http.StatusPaymentRequired)
+
+	// CodeInvalidRequest is returned for malformed request input (e.g. a paid order
+	// missing price/currency, or a points order missing pointsCost).
+	CodeInvalidRequest = errs.Register("commerce.invalid_request", http.StatusBadRequest)
 )
 
 // ProductNotFound returns a Coded error for a missing product.
@@ -59,4 +66,15 @@ func GatewayFailed(summary string) *errs.Coded {
 // NotifyInvalid returns a Coded error for an invalid payment notification.
 func NotifyInvalid(detail string) *errs.Coded {
 	return errs.New(CodeNotifyInvalid, detail, nil)
+}
+
+// InsufficientPoints returns a Coded error when the balance can't cover a redemption.
+func InsufficientPoints(pointsCost int) *errs.Coded {
+	return errs.New(CodeInsufficientPoints, "insufficient points balance",
+		map[string]any{"pointsCost": pointsCost})
+}
+
+// InvalidRequest returns a Coded error for malformed request input.
+func InvalidRequest(detail string) *errs.Coded {
+	return errs.New(CodeInvalidRequest, detail, nil)
 }
