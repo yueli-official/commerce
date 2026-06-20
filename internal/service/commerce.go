@@ -150,6 +150,19 @@ func (s *Service) MarkPaid(ctx context.Context, orderNo, providerTxID string, am
 	})
 }
 
+// GetOrderByNo returns the order with the given order number, or an error if not found.
+// Used by the dev-settle endpoint to retrieve the order's recorded amount.
+func (s *Service) GetOrderByNo(ctx context.Context, orderNo string) (*model.Order, error) {
+	o, err := s.db.GetOrderByNo(ctx, orderNo)
+	if err != nil {
+		return nil, err
+	}
+	if o == nil {
+		return nil, commerceerr.OrderNotFound(orderNo)
+	}
+	return o, nil
+}
+
 // Entitled reports whether sub is entitled to the product identified by (siteKey, externalID).
 // Reasons: "ok" (entitled), "not_purchased" (no entitlement or product absent), "expired" (future M2).
 func (s *Service) Entitled(ctx context.Context, sub, siteKey, externalID string) (EntitledResult, error) {

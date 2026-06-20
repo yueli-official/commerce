@@ -8,22 +8,63 @@ import (
 	"platform/gokit/authjwt"
 	"platform/gokit/ghttpx"
 	"platform/gokit/response"
+	"platform/services/commerce/internal/controller"
 	"platform/services/commerce/internal/dao"
+	"platform/services/commerce/internal/gateway"
+	"platform/services/commerce/internal/service"
 )
 
 // Deps are the wiring dependencies for the commerce server.
 type Deps struct {
-	Verifier *authjwt.Verifier
-	DB       *dao.PG
+	Verifier  *authjwt.Verifier
+	DB        *dao.PG
+	Registry  gateway.Registry
+	NotifyURL string // base URL for the alipay notify callback
+	ReturnURL string // URL the buyer is sent to after paying
+	DevSettle bool   // when true, register the /dev/orders/{orderNo}/settle endpoint
 }
 
 // Configure mounts the commerce-service routes onto s.
-// Task 1: only the public healthz liveness endpoint is registered.
 func Configure(s *ghttp.Server, d Deps) {
+	svc := service.New(d.DB)
+
+	// ── Public: liveness ────────────────────────────────────────────────────
 	s.Group("/", func(grp *ghttp.RouterGroup) {
 		grp.Middleware(ghttpx.Middleware)
 		grp.GET("/healthz", func(r *ghttp.Request) {
 			r.Response.WriteJson(response.OK(map[string]any{"status": "up"}))
 		})
 	})
+
+	// ── Public: Alipay async notify (no JWT; raw plaintext response) ────────
+	// The notify handler writes "success"/"fail" directly — ghttpx envelope
+	// is present for trace injection but will leave the response untouched
+	// because the handler writes raw bytes before Middleware.Next() returns.
+	if d.Registry != nil {
+		if gw, ok := d.Registry["alipay"]; ok {
+			notifyCtrl := controller.NewNotify(gw, svc)
+			s.Group("/", func(grp *ghttp.RouterGroup) {
+				grp.Middleware(ghttpx.Middleware)
+				grp.POST("/api/v1/payments/alipay/notify", notifyCtrl.Handle)
+			})
+		}
+	}
+
+	// ── Protected: JWT-required routes ──────────────────────────────────────
+	orderCtrl := controller.NewOrder(svc, d.Registry, d.NotifyURL, d.ReturnURL)
+	accessCtrl := controller.NewAccess(svc)
+	s.Group("/", func(grp *ghttp.RouterGroup) {
+		grp.Middleware(ghttpx.Middleware, authjwt.Middleware(d.Verifier))
+		grp.Bind(orderCtrl)
+		grp.Bind(accessCtrl)
+	})
+
+	// ── Dev-only: settle seam (conditionally registered) ────────────────────
+	if d.DevSettle {
+		settleCtrl := controller.NewDevSettle(svc)
+		s.Group("/", func(grp *ghttp.RouterGroup) {
+			grp.Middleware(ghttpx.Middleware)
+			grp.Bind(settleCtrl)
+		})
+	}
 }
