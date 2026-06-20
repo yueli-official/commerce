@@ -1,6 +1,6 @@
 package dao_test
 
-// Live PostgreSQL smoke for the commerce M1 schema.
+// Live PostgreSQL smoke for the commerce schema.
 // Skipped unless COMMERCE_PG_HOST is set:
 //
 //	COMMERCE_PG_HOST=192.168.5.5 COMMERCE_PG_USER=postgres COMMERCE_PG_PASS=postgres \

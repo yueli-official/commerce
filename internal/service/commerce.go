@@ -183,7 +183,8 @@ func (s *Service) GetOrderByNo(ctx context.Context, orderNo string) (*model.Orde
 }
 
 // Entitled reports whether sub is entitled to the product identified by (siteKey, externalID).
-// Reasons: "ok" (entitled), "not_purchased" (no entitlement or product absent), "expired" (future M2).
+// Reason is "ok" when entitled, otherwise "not_purchased" (no entitlement, or the product
+// has never been created).
 func (s *Service) Entitled(ctx context.Context, sub, siteKey, externalID string) (EntitledResult, error) {
 	var result EntitledResult
 

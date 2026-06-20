@@ -17,7 +17,7 @@ const (
 	ProductStatusInactive = "inactive"
 )
 
-// Product is a purchasable item tied to a site (spec §3).
+// Product is a purchasable item tied to a site.
 type Product struct {
 	ID         string    `json:"id"         orm:"id"`
 	SiteKey    string    `json:"siteKey"    orm:"site_key"`
@@ -31,7 +31,7 @@ type Product struct {
 	UpdatedAt  time.Time `json:"updatedAt"  orm:"updated_at"`
 }
 
-// Order is a single purchase transaction (spec §3).
+// Order is a single purchase transaction.
 type Order struct {
 	ID           string     `json:"id"           orm:"id"`
 	OrderNo      string     `json:"orderNo"      orm:"order_no"`
@@ -47,7 +47,7 @@ type Order struct {
 	UpdatedAt    time.Time  `json:"updatedAt"    orm:"updated_at"`
 }
 
-// Entitlement records that a subscriber may access a product (spec §3).
+// Entitlement records that a subscriber may access a product.
 type Entitlement struct {
 	ID        string     `json:"id"        orm:"id"`
 	Sub       string     `json:"sub"       orm:"sub"`

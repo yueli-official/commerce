@@ -1,5 +1,5 @@
 // Package v1 declares the g.Meta request/response contracts for the commerce
-// service HTTP API (spec §4).  Controllers embed these types to satisfy GoFrame's
+// service HTTP API.  Controllers embed these types to satisfy GoFrame's
 // struct-handler routing.
 package v1
 

@@ -35,5 +35,4 @@ type NotifyOut struct {
 }
 
 // Registry maps provider slugs to their gateway implementations.
-// M1 registers only "alipay".
 type Registry map[string]PaymentGateway

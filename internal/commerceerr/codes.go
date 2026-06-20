@@ -1,5 +1,5 @@
 // Package commerceerr declares the commerce-service error codes (namespace commerce.*)
-// and their HTTP status, registered with the shared gokit/errs catalog (spec §7).
+// and their HTTP status, registered with the shared gokit/errs catalog.
 package commerceerr
 
 import (

@@ -26,10 +26,8 @@ type alipayProvider struct {
 	appID  string // configured merchant app_id; verified against every notify
 }
 
-// NewAlipayProvider constructs an alipayProvider from the given config.
-// It mirrors the donor's newAlipayClient logic: normalises key strings,
-// constructs the client, and loads the Alipay public key for signature
-// verification.
+// NewAlipayProvider constructs an alipayProvider from the given config, loading
+// the Alipay public key needed to verify async-notify signatures.
 func NewAlipayProvider(cfg AlipayConfig) (PaymentGateway, error) {
 	privateKey := normalizeAlipayKey(cfg.PrivateKey)
 	publicKey := normalizeAlipayKey(cfg.AlipayPublicKey)
@@ -46,7 +44,6 @@ func NewAlipayProvider(cfg AlipayConfig) (PaymentGateway, error) {
 
 // normalizeAlipayKey strips PEM headers, whitespace, and literal \n sequences
 // from a key string, yielding bare base64 as the alipay library expects.
-// Ported verbatim from the donor plugin's normalizeKey function.
 func normalizeAlipayKey(key string) string {
 	key = strings.TrimSpace(key)
 	if key == "" {
