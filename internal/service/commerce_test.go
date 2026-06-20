@@ -255,18 +255,14 @@ func TestMarkPaid_Idempotent(t *testing.T) {
 	if err := svc.MarkPaid(ctx, o.OrderNo, "tx-idem-dup", 1200); err != nil {
 		t.Fatalf("MarkPaid (second, idempotent): %v", err)
 	}
-	// EntitlementExists stays true and count is still 1 (ON CONFLICT DO NOTHING).
-	exists2, err := pg.EntitlementExists(ctx, sub, p.ID)
+	// Assert count is exactly 1 — independent of ON CONFLICT, this locks in "no second grant".
+	count, err := pg.EntitlementCount(ctx, sub, p.ID)
 	if err != nil {
-		t.Fatalf("EntitlementExists (after second): %v", err)
+		t.Fatalf("EntitlementCount (after second): %v", err)
 	}
-	if !exists2 {
-		t.Error("entitlement vanished after second MarkPaid")
+	if count != 1 {
+		t.Errorf("entitlement count = %d after two MarkPaid calls, want 1", count)
 	}
-	// Extra sanity: Entitled returns ok.
-	res, err := svc.Entitled(ctx, sub, "resource", o.OrderNo)
-	_ = res
-	_ = err // We query by extID, not orderNo — covered in TestEntitled_OK below.
 }
 
 // TestEntitled_NotPurchased_ProductAbsent verifies {false, not_purchased, PriceCents=nil}

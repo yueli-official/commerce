@@ -124,10 +124,21 @@ func (s *Service) MarkPaid(ctx context.Context, orderNo, providerTxID string, am
 	}
 
 	// Transact: mark paid + grant entitlement.
+	// The UPDATE is conditional on status='paying' so that a concurrent delivery
+	// that already won the race leaves 0 rows affected → we return nil (safe).
 	now := gtime.New(time.Now())
 	return s.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		if err := s.db.UpdateOrderStatusTx(ctx, tx, o.ID, model.OrderStatusPaid, providerTxID, now); err != nil {
+		updated, err := s.db.ConditionalUpdateOrderStatusTx(
+			ctx, tx, o.ID,
+			model.OrderStatusPaying, model.OrderStatusPaid,
+			providerTxID, now,
+		)
+		if err != nil {
 			return err
+		}
+		if !updated {
+			// Another concurrent delivery already transitioned this order; safe to no-op.
+			return nil
 		}
 		ent := &model.Entitlement{
 			Sub:       o.Sub,

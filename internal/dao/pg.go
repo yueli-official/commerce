@@ -136,6 +136,13 @@ func (r *PG) EntitlementExists(ctx context.Context, sub, productID string) (bool
 	return n > 0, nil
 }
 
+// EntitlementCount returns the number of entitlement rows for (sub, productID).
+// Used in tests to assert exactly-once grant semantics.
+func (r *PG) EntitlementCount(ctx context.Context, sub, productID string) (int, error) {
+	return r.db.Model("entitlements").Ctx(ctx).
+		Where("sub", sub).Where("product_id", productID).Count()
+}
+
 // Transaction executes fn inside a database transaction.
 // If fn returns an error the transaction is rolled back; otherwise committed.
 func (r *PG) Transaction(ctx context.Context, fn func(ctx context.Context, tx gdb.TX) error) error {
@@ -156,6 +163,34 @@ func (r *PG) UpdateOrderStatusTx(ctx context.Context, tx gdb.TX, orderID, status
 	}
 	_, err := tx.Ctx(ctx).Model("orders").Where("id", orderID).Data(data).Update()
 	return err
+}
+
+// ConditionalUpdateOrderStatusTx atomically transitions an order to newStatus only if
+// its current status matches fromStatus. Returns (true, nil) when the row was updated,
+// (false, nil) when no row matched (race lost or state already changed), and
+// (false, err) on a database error.
+func (r *PG) ConditionalUpdateOrderStatusTx(ctx context.Context, tx gdb.TX, orderID, fromStatus, toStatus, providerTxID string, paidAt *gtime.Time) (bool, error) {
+	data := g.Map{
+		"status":     toStatus,
+		"updated_at": gtime.Now(),
+	}
+	if providerTxID != "" {
+		data["provider_tx_id"] = providerTxID
+	}
+	if paidAt != nil {
+		data["paid_at"] = paidAt
+	}
+	res, err := tx.Ctx(ctx).Model("orders").
+		Where("id", orderID).Where("status", fromStatus).
+		Data(data).Update()
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // InsertEntitlementTx inserts an entitlement row inside an existing transaction.
