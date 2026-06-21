@@ -1,3 +1,5 @@
+# CONFIG TEMPLATE — once: cp config.example.yaml config.yaml, then set local values (DB host 192.168.5.5).
+# Real config.yaml is GITIGNORED. Platform standard: backend-platform-conventions §7.
 server:
   address: "127.0.0.1:8084"
   openapiPath: "/api.json"
