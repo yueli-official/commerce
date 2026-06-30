@@ -11,6 +11,8 @@ import (
 	"github.com/smartwalle/alipay/v3"
 )
 
+var ErrUnsupportedOperation = fmt.Errorf("payment gateway operation unsupported")
+
 // AlipayConfig holds the configuration fields read from the commerce.alipay
 // config block (manifest/config/config.yaml + GF_* env overrides).
 type AlipayConfig struct {
@@ -80,7 +82,7 @@ func CheckNotifyAppID(notifyAppID, configuredAppID string) error {
 
 // CreatePayment creates an Alipay page-pay session and returns the redirect URL.
 // The amount is converted from cents to a decimal string (e.g. 9900 → "99.00").
-func (p *alipayProvider) CreatePayment(_ context.Context, in CreateIn) (string, error) {
+func (p *alipayProvider) CreatePayment(_ context.Context, in CreateIn) (*CreatePaymentOut, error) {
 	trade := alipay.TradePagePay{
 		Trade: alipay.Trade{
 			Subject:     in.Subject,
@@ -93,9 +95,13 @@ func (p *alipayProvider) CreatePayment(_ context.Context, in CreateIn) (string, 
 	}
 	payURL, err := p.client.TradePagePay(trade)
 	if err != nil {
-		return "", fmt.Errorf("alipay TradePagePay: %w", err)
+		return nil, fmt.Errorf("alipay TradePagePay: %w", err)
 	}
-	return payURL.String(), nil
+	return &CreatePaymentOut{Provider: "alipay", Method: string(CapabilityRedirect), PayURL: payURL.String()}, nil
+}
+
+func (p *alipayProvider) CapturePayment(context.Context, CapturePaymentIn) (*CapturePaymentOut, error) {
+	return nil, ErrUnsupportedOperation
 }
 
 // VerifyNotify authenticates an Alipay async notify callback.
@@ -134,4 +140,8 @@ func (p *alipayProvider) VerifyNotify(_ context.Context, body []byte, _ map[stri
 		}, nil
 	}
 	return &NotifyOut{Success: false}, nil
+}
+
+func (p *alipayProvider) Refund(context.Context, RefundIn) (*RefundOut, error) {
+	return nil, ErrUnsupportedOperation
 }

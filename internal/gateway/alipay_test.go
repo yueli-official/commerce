@@ -165,16 +165,19 @@ func TestCreatePayment_ProducesRedirectURL(t *testing.T) {
 		ReturnURL:   "https://example.com/return",
 	}
 
-	payURL, err := gw.CreatePayment(context.Background(), in)
+	payment, err := gw.CreatePayment(context.Background(), in)
 	if err != nil {
 		t.Fatalf("CreatePayment error: %v", err)
 	}
-	if payURL == "" {
+	if payment.PayURL == "" {
 		t.Fatal("expected non-empty payURL")
 	}
-	// Alipay sandbox host is openapi.alipaydev.com; production is openapi.alipay.com.
-	if !strings.Contains(payURL, "alipay") {
-		t.Errorf("payURL %q does not contain expected alipay gateway host", payURL)
+	if payment.Method != string(gateway.CapabilityRedirect) {
+		t.Fatalf("method = %q, want redirect", payment.Method)
 	}
-	t.Logf("CreatePayment offline URL (first 120 chars): %.120s...", payURL)
+	// Alipay sandbox host is openapi.alipaydev.com; production is openapi.alipay.com.
+	if !strings.Contains(payment.PayURL, "alipay") {
+		t.Errorf("payURL %q does not contain expected alipay gateway host", payment.PayURL)
+	}
+	t.Logf("CreatePayment offline URL (first 120 chars): %.120s...", payment.PayURL)
 }

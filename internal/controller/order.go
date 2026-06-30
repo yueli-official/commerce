@@ -84,7 +84,7 @@ func (c *Order) CreateOrder(ctx context.Context, req *v1.CreateOrderReq) (*v1.Cr
 		return nil, errs.New(commerceerr.CodeGatewayFailed, "alipay gateway not registered", nil)
 	}
 
-	payURL, err := gw.CreatePayment(ctx, gateway.CreateIn{
+	payment, err := gw.CreatePayment(ctx, gateway.CreateIn{
 		OrderNo:     order.OrderNo,
 		Subject:     req.Title,
 		AmountCents: order.AmountCents,
@@ -105,7 +105,7 @@ func (c *Order) CreateOrder(ctx context.Context, req *v1.CreateOrderReq) (*v1.Cr
 
 	return &v1.CreateOrderRes{
 		OrderNo: order.OrderNo,
-		PayURL:  payURL,
+		PayURL:  payment.PayURL,
 	}, nil
 }
 

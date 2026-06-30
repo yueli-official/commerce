@@ -41,13 +41,13 @@ import (
 // ─── test constants ──────────────────────────────────────────────────────────
 
 const (
-	testIssuer    = "http://localhost:8081"
-	testKID       = "commerce-test-kid"
-	testSubAlice  = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-	testSubBob    = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-	fakePayURL    = "https://fakepay.example.com/pay?token=TEST"
-	fakeSiteKey   = "resource"
-	fakeExtID     = "res-test-001"
+	testIssuer   = "http://localhost:8081"
+	testKID      = "commerce-test-kid"
+	testSubAlice = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	testSubBob   = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	fakePayURL   = "https://fakepay.example.com/pay?token=TEST"
+	fakeSiteKey  = "resource"
+	fakeExtID    = "res-test-001"
 )
 
 // ─── fake gateway ────────────────────────────────────────────────────────────
@@ -63,18 +63,30 @@ type fakeGateway struct {
 // gateway outage.  Used to test the order-cancel-on-failure path.
 type failingGateway struct{}
 
-func (f *failingGateway) CreatePayment(_ context.Context, _ gateway.CreateIn) (string, error) {
-	return "", fmt.Errorf("simulated gateway failure")
+func (f *failingGateway) CreatePayment(_ context.Context, _ gateway.CreateIn) (*gateway.CreatePaymentOut, error) {
+	return nil, fmt.Errorf("simulated gateway failure")
+}
+
+func (f *failingGateway) CapturePayment(context.Context, gateway.CapturePaymentIn) (*gateway.CapturePaymentOut, error) {
+	return nil, fmt.Errorf("simulated gateway failure")
 }
 
 func (f *failingGateway) VerifyNotify(_ context.Context, _ []byte, _ map[string]string) (*gateway.NotifyOut, error) {
 	return nil, fmt.Errorf("simulated gateway failure")
 }
 
-func (f *fakeGateway) CreatePayment(_ context.Context, in gateway.CreateIn) (string, error) {
+func (f *failingGateway) Refund(context.Context, gateway.RefundIn) (*gateway.RefundOut, error) {
+	return nil, fmt.Errorf("simulated gateway failure")
+}
+
+func (f *fakeGateway) CreatePayment(_ context.Context, in gateway.CreateIn) (*gateway.CreatePaymentOut, error) {
 	// Record the order number in the sentinel body so VerifyNotify can match.
 	f.successBody = []byte("order=" + in.OrderNo)
-	return fakePayURL, nil
+	return &gateway.CreatePaymentOut{Provider: "alipay", Method: string(gateway.CapabilityRedirect), PayURL: fakePayURL}, nil
+}
+
+func (f *fakeGateway) CapturePayment(context.Context, gateway.CapturePaymentIn) (*gateway.CapturePaymentOut, error) {
+	return nil, gateway.ErrUnsupportedOperation
 }
 
 func (f *fakeGateway) VerifyNotify(_ context.Context, body []byte, _ map[string]string) (*gateway.NotifyOut, error) {
@@ -89,6 +101,10 @@ func (f *fakeGateway) VerifyNotify(_ context.Context, body []byte, _ map[string]
 		}, nil
 	}
 	return &gateway.NotifyOut{Success: false}, nil
+}
+
+func (f *fakeGateway) Refund(context.Context, gateway.RefundIn) (*gateway.RefundOut, error) {
+	return nil, gateway.ErrUnsupportedOperation
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
