@@ -120,6 +120,49 @@ func TestGuestCheckoutCreatesBuyerOrderItemAndGrantOnSettle(t *testing.T) {
 	}
 }
 
+func TestGuestCheckoutReusesRecentPayingOrder(t *testing.T) {
+	svc, pg, ctx := newSvc(t)
+	item := service.CheckoutItemDesc{
+		SiteKey:      "shop",
+		ExternalID:   uid("variant-reuse"),
+		VariantID:    uid("variant-id-reuse"),
+		Title:        "Reusable Pack",
+		VariantTitle: "Standard",
+		SKU:          "REUSE-STD",
+		PriceCents:   1900,
+		Currency:     "CNY",
+		DeliveryKind: "asset_file",
+		DeliveryRef:  "asset-reuse",
+		Quantity:     1,
+	}
+	first, err := svc.CreateCheckout(ctx, service.CheckoutDesc{
+		BuyerEmail: "reuse@example.com",
+		Provider:   "alipay",
+		Items:      []service.CheckoutItemDesc{item},
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckout first: %v", err)
+	}
+	second, err := svc.CreateCheckout(ctx, service.CheckoutDesc{
+		BuyerEmail: " reuse@example.com ",
+		Provider:   "alipay",
+		Items:      []service.CheckoutItemDesc{item},
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckout second: %v", err)
+	}
+	if second.OrderNo != first.OrderNo {
+		t.Fatalf("second orderNo = %q, want reused %q", second.OrderNo, first.OrderNo)
+	}
+	orders, err := pg.ListOrders(ctx, model.OrderStatusPaying, "reuse@example.com", 10, 0)
+	if err != nil {
+		t.Fatalf("ListOrders: %v", err)
+	}
+	if len(orders) != 1 {
+		t.Fatalf("paying orders = %d, want 1", len(orders))
+	}
+}
+
 func TestUserCheckoutGrantsEntitlementOnSettle(t *testing.T) {
 	svc, pg, ctx := newSvc(t)
 	sub := uid("buyer-sub")

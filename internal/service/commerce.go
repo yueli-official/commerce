@@ -141,6 +141,8 @@ type DeliveryConfig struct {
 	TTL           time.Duration
 }
 
+const reusableCheckoutWindow = 10 * time.Minute
+
 type Option func(*Service)
 
 func WithDeliveryConfig(cfg DeliveryConfig) Option {
@@ -278,6 +280,11 @@ func (s *Service) CreateCheckout(ctx context.Context, desc CheckoutDesc) (*model
 	if total <= 0 {
 		return nil, commerceerr.NotifyInvalid("checkout amount must be positive")
 	}
+	if existing, err := s.reusableCheckout(ctx, buyer, desc, total, currency); err != nil {
+		return nil, err
+	} else if existing != nil {
+		return existing, nil
+	}
 	o := &model.Order{
 		OrderNo: NewOrderNo(), Sub: buyer.BuyerSub, ProductID: firstProductID, AmountCents: total, Currency: currency,
 		Status: model.OrderStatusPaying, Gateway: desc.Provider, BuyerID: buyer.ID, BuyerSub: buyer.BuyerSub, BuyerEmail: buyer.BuyerEmail,
@@ -287,6 +294,26 @@ func (s *Service) CreateCheckout(ctx context.Context, desc CheckoutDesc) (*model
 		return nil, err
 	}
 	return o, nil
+}
+
+func (s *Service) reusableCheckout(ctx context.Context, buyer *model.Buyer, desc CheckoutDesc, amountCents int, currency string) (*model.Order, error) {
+	if len(desc.Items) != 1 {
+		return nil, nil
+	}
+	item := desc.Items[0]
+	if strings.TrimSpace(item.VariantID) == "" {
+		return nil, nil
+	}
+	return s.db.FindReusableCheckout(
+		ctx,
+		strings.TrimSpace(buyer.BuyerSub),
+		normalizeEmail(buyer.BuyerEmail),
+		strings.TrimSpace(desc.Provider),
+		strings.TrimSpace(item.VariantID),
+		amountCents,
+		currency,
+		time.Now().UTC().Add(-reusableCheckoutWindow),
+	)
 }
 
 func (s *Service) RedeemCheckout(ctx context.Context, desc CheckoutDesc) (*PointsCheckoutResult, error) {

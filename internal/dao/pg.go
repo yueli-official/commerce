@@ -3,6 +3,7 @@ package dao
 
 import (
 	"context"
+	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
@@ -168,6 +169,28 @@ func (r *PG) InsertCheckoutOrder(ctx context.Context, o *model.Order, items []*m
 	return r.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		return r.InsertCheckoutOrderTx(ctx, tx, o, items)
 	})
+}
+
+func (r *PG) FindReusableCheckout(ctx context.Context, buyerSub, buyerEmail, provider, variantID string, amountCents int, currency string, since time.Time) (*model.Order, error) {
+	var o *model.Order
+	err := r.db.Model("orders o").Ctx(ctx).
+		InnerJoin("order_items oi", "oi.order_id = o.id").
+		Where("o.status", model.OrderStatusPaying).
+		Where("o.payment_provider", provider).
+		Where("oi.variant_id", variantID).
+		Where("o.amount_cents", amountCents).
+		Where("o.currency", currency).
+		Where("o.created_at >= ?", since).
+		Where("((? <> '' AND o.buyer_sub = ?) OR (? <> '' AND lower(o.buyer_email) = ?))",
+			buyerSub, buyerSub, buyerEmail, buyerEmail).
+		Order("o.created_at DESC").
+		Limit(1).
+		Fields("o.*").
+		Scan(&o)
+	if err != nil {
+		return nil, err
+	}
+	return o, nil
 }
 
 func (r *PG) InsertCheckoutOrderTx(ctx context.Context, tx gdb.TX, o *model.Order, items []*model.OrderItem) error {
