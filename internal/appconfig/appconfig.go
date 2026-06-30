@@ -57,3 +57,21 @@ func LoadAlipay(ctx context.Context) Alipay {
 		ReturnURL:       g.Cfg().MustGet(ctx, "commerce.alipay.return_url").String(),
 	}
 }
+
+// PayPal holds the PayPal Orders API provider config.
+type PayPal struct {
+	ClientID     string
+	ClientSecret string
+	Sandbox      bool
+	BaseURL      string
+}
+
+// LoadPayPal reads commerce.paypal.* from the GoFrame config.
+func LoadPayPal(ctx context.Context) PayPal {
+	return PayPal{
+		ClientID:     g.Cfg().MustGet(ctx, "commerce.paypal.client_id").String(),
+		ClientSecret: g.Cfg().MustGet(ctx, "commerce.paypal.client_secret").String(),
+		Sandbox:      g.Cfg().MustGet(ctx, "commerce.paypal.sandbox", true).Bool(),
+		BaseURL:      g.Cfg().MustGet(ctx, "commerce.paypal.base_url").String(),
+	}
+}

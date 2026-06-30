@@ -59,6 +59,7 @@ func (c *Checkout) CreateCheckout(ctx context.Context, req *v1.CreateCheckoutReq
 		OrderNo:     order.OrderNo,
 		Subject:     checkoutSubject(req.Items),
 		AmountCents: order.AmountCents,
+		Currency:    order.Currency,
 		NotifyURL:   notifyURLFor(provider, c.notifyURL),
 		ReturnURL:   req.ReturnURL,
 	})

@@ -26,7 +26,7 @@ commerce:
     audience: ""            # "" disables the audience check
 
   devSettle: false          # true → auto-settle orders without real payment (dev only)
-  gateways: [alipay]
+  gateways: [alipay, wechat, paypal]
 
   # Daily check-in reward curve (M2): points for an N-day streak =
   # base + (N-1)*step, capped at cap; a missed day resets the streak.
@@ -42,3 +42,10 @@ commerce:
     sandbox: true
     notify_url: ""
     return_url: ""
+
+  paypal:
+    client_id: ""
+    client_secret: ""
+    sandbox: true
+    # Optional override for tests/proxies. Empty uses PayPal sandbox/live API base.
+    base_url: ""

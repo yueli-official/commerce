@@ -47,6 +47,19 @@ func main() {
 		}
 		reg["alipay"] = alipayGW
 	}
+	paypalCfg := appconfig.LoadPayPal(ctx)
+	if paypalCfg.ClientID != "" && paypalCfg.ClientSecret != "" {
+		paypalGW, err := gateway.NewPayPalProvider(gateway.PayPalConfig{
+			ClientID:     paypalCfg.ClientID,
+			ClientSecret: paypalCfg.ClientSecret,
+			Sandbox:      paypalCfg.Sandbox,
+			BaseURL:      paypalCfg.BaseURL,
+		})
+		if err != nil {
+			panic(err)
+		}
+		reg["paypal"] = paypalGW
+	}
 
 	devSettle := g.Cfg().MustGet(ctx, "commerce.devSettle").Bool()
 	if devSettle {
@@ -54,7 +67,9 @@ func main() {
 			reg["alipay"] = gateway.NewAlipayStubProvider()
 		}
 		reg["wechat"] = gateway.NewWeChatStubProvider()
-		reg["paypal"] = gateway.NewPayPalStubProvider()
+		if _, ok := reg["paypal"]; !ok {
+			reg["paypal"] = gateway.NewPayPalStubProvider()
+		}
 	}
 
 	// Prod-safety guard: devSettle backdoor must never reach a real Alipay endpoint.

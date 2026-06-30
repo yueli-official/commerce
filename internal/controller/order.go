@@ -88,6 +88,7 @@ func (c *Order) CreateOrder(ctx context.Context, req *v1.CreateOrderReq) (*v1.Cr
 		OrderNo:     order.OrderNo,
 		Subject:     req.Title,
 		AmountCents: order.AmountCents,
+		Currency:    order.Currency,
 		NotifyURL:   c.notifyURL,
 		ReturnURL:   c.returnURL,
 	})

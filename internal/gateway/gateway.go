@@ -36,6 +36,7 @@ type CreateIn struct {
 	OrderNo     string
 	Subject     string
 	AmountCents int
+	Currency    string
 	NotifyURL   string
 	ReturnURL   string
 }
