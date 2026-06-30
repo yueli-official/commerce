@@ -95,6 +95,18 @@ type CheckoutStatusRes struct {
 	DeliveryRef   string `json:"deliveryRef,omitempty"`
 }
 
+type CancelCheckoutReq struct {
+	g.Meta     `path:"/api/v1/checkouts/{orderNo}/cancel" method:"POST" tags:"Commerce Checkout" summary:"Cancel a buyer-owned pending checkout"`
+	OrderNo    string `p:"orderNo" v:"required"`
+	BuyerEmail string `json:"buyerEmail"`
+}
+
+type CancelCheckoutRes struct {
+	OrderNo       string `json:"orderNo"`
+	Status        string `json:"status"`
+	DeliveryState string `json:"deliveryState"`
+}
+
 type CreatePointsCheckoutReq struct {
 	g.Meta     `path:"/api/v1/checkouts/points" method:"POST" tags:"Commerce Checkout" summary:"Redeem a virtual-goods checkout with points"`
 	BuyerEmail string            `json:"buyerEmail"`
@@ -153,6 +165,50 @@ type MyPurchasesReq struct {
 
 type MyPurchasesRes struct {
 	Purchases []DeliveryView `json:"purchases"`
+}
+
+// ─── GET /api/v1/payments/methods ─────────────────────────────────────────
+
+type PaymentMethodView struct {
+	Provider    string `json:"provider"`
+	Label       string `json:"label"`
+	Method      string `json:"method"`
+	Enabled     bool   `json:"enabled"`
+	Registered  bool   `json:"registered"`
+	SortOrder   int    `json:"sortOrder"`
+	Description string `json:"description,omitempty"`
+}
+
+type PublicPaymentMethodsReq struct {
+	g.Meta `path:"/api/v1/payments/methods" method:"GET" tags:"Commerce Payments" summary:"List enabled and configured payment methods"`
+}
+
+type PublicPaymentMethodsRes struct {
+	Methods []PaymentMethodView `json:"methods"`
+}
+
+type AdminPaymentMethodsReq struct {
+	g.Meta `path:"/api/v1/admin/commerce/payment-methods" method:"GET" tags:"Admin Commerce" summary:"List payment method configuration"`
+}
+
+type AdminPaymentMethodsRes struct {
+	Methods []PaymentMethodView `json:"methods"`
+}
+
+type AdminPaymentMethodInput struct {
+	Provider  string `json:"provider" v:"required|length:1,32"`
+	Label     string `json:"label"`
+	Enabled   bool   `json:"enabled"`
+	SortOrder int    `json:"sortOrder"`
+}
+
+type AdminSavePaymentMethodsReq struct {
+	g.Meta  `path:"/api/v1/admin/commerce/payment-methods" method:"PUT" tags:"Admin Commerce" summary:"Save payment method configuration"`
+	Methods []AdminPaymentMethodInput `json:"methods" v:"required"`
+}
+
+type AdminSavePaymentMethodsRes struct {
+	Methods []PaymentMethodView `json:"methods"`
 }
 
 // ─── GET /api/v1/admin/commerce/orders ─────────────────────────────────────

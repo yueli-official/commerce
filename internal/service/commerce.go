@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -116,6 +117,22 @@ type CheckoutStatusResult struct {
 	Grant *model.DeliveryGrant
 }
 
+type PaymentMethodInput struct {
+	Provider  string
+	Label     string
+	Enabled   bool
+	SortOrder int
+}
+
+type PaymentMethodConfig struct {
+	Provider    string
+	Label       string
+	Method      string
+	Enabled     bool
+	SortOrder   int
+	Description string
+}
+
 // EntitledResult is the answer to an Entitled query.
 type EntitledResult struct {
 	Entitled bool
@@ -142,6 +159,23 @@ type DeliveryConfig struct {
 }
 
 const reusableCheckoutWindow = 10 * time.Minute
+
+var paymentMethodDefinitions = map[string]PaymentMethodConfig{
+	"alipay": {
+		Provider: "alipay", Label: "Alipay", Method: "redirect", SortOrder: 10,
+		Description: "Page redirect checkout",
+	},
+	"wechat": {
+		Provider: "wechat", Label: "WeChat Pay", Method: "native_qr", SortOrder: 20,
+		Description: "Native QR checkout",
+	},
+	"paypal": {
+		Provider: "paypal", Label: "PayPal", Method: "browser_button", SortOrder: 30,
+		Description: "Browser approval and server capture",
+	},
+}
+
+var paymentMethodOrder = []string{"alipay", "wechat", "paypal"}
 
 type Option func(*Service)
 
@@ -240,6 +274,13 @@ func (s *Service) CreateCheckout(ctx context.Context, desc CheckoutDesc) (*model
 	}
 	if desc.Provider == "" {
 		desc.Provider = "alipay"
+	}
+	enabled, err := s.PaymentMethodEnabled(ctx, desc.Provider)
+	if err != nil {
+		return nil, err
+	}
+	if !enabled {
+		return nil, commerceerr.InvalidRequest("payment provider is not enabled")
 	}
 
 	var (
@@ -521,6 +562,88 @@ func (s *Service) SetCheckoutPaymentSession(ctx context.Context, orderNo, sessio
 	return s.db.UpdatePaymentSession(ctx, o.ID, sessionID)
 }
 
+func (s *Service) PaymentMethods(ctx context.Context) ([]PaymentMethodConfig, error) {
+	rows, err := s.db.PaymentMethods(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byProvider := make(map[string]*model.PaymentMethod, len(rows))
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+		byProvider[strings.TrimSpace(row.Provider)] = row
+	}
+	methods := make([]PaymentMethodConfig, 0, len(paymentMethodOrder))
+	for _, provider := range paymentMethodOrder {
+		def := paymentMethodDefinitions[provider]
+		if row := byProvider[provider]; row != nil {
+			def.Enabled = row.Enabled
+			def.SortOrder = row.SortOrder
+			if strings.TrimSpace(row.DisplayName) != "" {
+				def.Label = row.DisplayName
+			}
+		}
+		methods = append(methods, def)
+	}
+	sort.SliceStable(methods, func(i, j int) bool {
+		if methods[i].SortOrder == methods[j].SortOrder {
+			return methods[i].Provider < methods[j].Provider
+		}
+		return methods[i].SortOrder < methods[j].SortOrder
+	})
+	return methods, nil
+}
+
+func (s *Service) PaymentMethodEnabled(ctx context.Context, provider string) (bool, error) {
+	provider = strings.TrimSpace(provider)
+	if _, ok := paymentMethodDefinitions[provider]; !ok {
+		return false, nil
+	}
+	methods, err := s.PaymentMethods(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, method := range methods {
+		if method.Provider == provider {
+			return method.Enabled, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *Service) SavePaymentMethods(ctx context.Context, inputs []PaymentMethodInput) ([]PaymentMethodConfig, error) {
+	seen := map[string]bool{}
+	for _, input := range inputs {
+		provider := strings.TrimSpace(input.Provider)
+		def, ok := paymentMethodDefinitions[provider]
+		if !ok {
+			return nil, commerceerr.InvalidRequest("unsupported payment provider")
+		}
+		if seen[provider] {
+			return nil, commerceerr.InvalidRequest("duplicate payment provider")
+		}
+		seen[provider] = true
+		label := strings.TrimSpace(input.Label)
+		if label == "" {
+			label = def.Label
+		}
+		sortOrder := input.SortOrder
+		if sortOrder < 0 {
+			return nil, commerceerr.InvalidRequest("sort order cannot be negative")
+		}
+		if sortOrder == 0 {
+			sortOrder = def.SortOrder
+		}
+		if err := s.db.UpsertPaymentMethod(ctx, &model.PaymentMethod{
+			Provider: provider, Enabled: input.Enabled, DisplayName: label, SortOrder: sortOrder,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return s.PaymentMethods(ctx)
+}
+
 func (s *Service) resolveBuyer(ctx context.Context, desc CheckoutDesc) (*model.Buyer, error) {
 	email := normalizeEmail(desc.BuyerEmail)
 	if strings.TrimSpace(desc.BuyerSub) == "" && email == "" {
@@ -663,6 +786,26 @@ func (s *Service) CancelOrder(ctx context.Context, orderNo string) error {
 		return nil
 	}
 	return s.db.UpdateOrderStatus(ctx, o.ID, model.OrderStatusCancelled)
+}
+
+func (s *Service) CancelCheckout(ctx context.Context, orderNo, buyerSub, buyerEmail string) (*model.Order, error) {
+	o, err := s.GetOrderByNo(ctx, orderNo)
+	if err != nil {
+		return nil, err
+	}
+	if !canViewCheckout(o, buyerSub, buyerEmail) {
+		return nil, commerceerr.Forbidden()
+	}
+	if o.Status == model.OrderStatusPending || o.Status == model.OrderStatusPaying {
+		if err := s.db.UpdateOrderStatus(ctx, o.ID, model.OrderStatusCancelled); err != nil {
+			return nil, err
+		}
+		o, err = s.GetOrderByNo(ctx, orderNo)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return o, nil
 }
 
 // GetOrderByNo returns the order with the given order number, or an error if not found.

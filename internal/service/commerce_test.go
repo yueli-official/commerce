@@ -68,6 +68,7 @@ func resetSchema(t *testing.T, db gdb.DB) {
 		"DROP TABLE IF EXISTS entitlements",
 		"DROP TABLE IF EXISTS orders",
 		"DROP TABLE IF EXISTS commerce_buyers",
+		"DROP TABLE IF EXISTS commerce_payment_methods",
 		"DROP TABLE IF EXISTS products",
 	} {
 		if _, err := db.Exec(ctx, stmt); err != nil {
@@ -78,6 +79,7 @@ func resetSchema(t *testing.T, db gdb.DB) {
 		"../../manifest/sql/migrations/0001_init.up.sql",
 		"../../manifest/sql/migrations/0002_credits_checkin.up.sql",
 		"../../manifest/sql/migrations/0003_virtual_shop_checkout.up.sql",
+		"../../manifest/sql/migrations/0004_payment_methods.up.sql",
 	} {
 		up, err := os.ReadFile(f)
 		if err != nil {

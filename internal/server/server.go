@@ -70,9 +70,11 @@ func Configure(s *ghttp.Server, d Deps) {
 	// Guest buyers identify by email; logged-in buyers get their subject from an
 	// optional Bearer token injected by the app BFF.
 	checkoutCtrl := controller.NewCheckout(svc, d.Registry, d.NotifyURL)
+	paymentConfigCtrl := controller.NewPaymentConfig(svc, d.Registry)
 	s.Group("/", func(grp *ghttp.RouterGroup) {
 		grp.Middleware(ghttpx.Middleware, authjwt.OptionalMiddleware(d.Verifier))
 		grp.Bind(checkoutCtrl)
+		grp.Bind(paymentConfigCtrl)
 	})
 
 	// ── Protected: JWT-required routes ──────────────────────────────────────

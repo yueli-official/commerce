@@ -255,6 +255,28 @@ WHERE id = ?`, nullableString(sessionID), orderID)
 	return err
 }
 
+func (r *PG) PaymentMethods(ctx context.Context) ([]*model.PaymentMethod, error) {
+	var methods []*model.PaymentMethod
+	err := r.db.Model("commerce_payment_methods").Ctx(ctx).
+		Order("sort_order ASC, provider ASC").
+		Scan(&methods)
+	return methods, err
+}
+
+func (r *PG) UpsertPaymentMethod(ctx context.Context, method *model.PaymentMethod) error {
+	_, err := r.db.Exec(ctx, `
+INSERT INTO commerce_payment_methods (provider, enabled, display_name, sort_order)
+VALUES (?, ?, ?, ?)
+ON CONFLICT (provider) DO UPDATE
+  SET enabled = EXCLUDED.enabled,
+      display_name = EXCLUDED.display_name,
+      sort_order = EXCLUDED.sort_order,
+      updated_at = now()`,
+		method.Provider, method.Enabled, method.DisplayName, method.SortOrder,
+	)
+	return err
+}
+
 // InsertEntitlement inserts an entitlement row. Duplicate (sub, product_id) is silently ignored
 // (ON CONFLICT DO NOTHING). e.ID is set if empty.
 func (r *PG) InsertEntitlement(ctx context.Context, e *model.Entitlement) error {

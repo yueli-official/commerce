@@ -160,6 +160,22 @@ func (c *Checkout) CheckoutStatus(ctx context.Context, req *v1.CheckoutStatusReq
 	return res, nil
 }
 
+func (c *Checkout) CancelCheckout(ctx context.Context, req *v1.CancelCheckoutReq) (*v1.CancelCheckoutRes, error) {
+	var buyerSub string
+	if p, ok := authjwt.From(ctx); ok && p != nil {
+		buyerSub = p.Subject
+	}
+	order, err := c.svc.CancelCheckout(ctx, req.OrderNo, buyerSub, req.BuyerEmail)
+	if err != nil {
+		return nil, err
+	}
+	return &v1.CancelCheckoutRes{
+		OrderNo:       order.OrderNo,
+		Status:        order.Status,
+		DeliveryState: order.DeliveryState,
+	}, nil
+}
+
 func (c *Checkout) DeliveryByToken(ctx context.Context, req *v1.DeliveryByTokenReq) (*v1.DeliveryByTokenRes, error) {
 	delivery, err := c.svc.DeliveryByToken(ctx, req.Token)
 	if err != nil {

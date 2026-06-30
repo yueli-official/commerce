@@ -182,3 +182,12 @@ type DeliveryGrant struct {
 	ExpiresAt   *time.Time `json:"expiresAt"   orm:"expires_at"`
 	RevokedAt   *time.Time `json:"revokedAt"   orm:"revoked_at"`
 }
+
+type PaymentMethod struct {
+	Provider    string    `json:"provider"    orm:"provider"`
+	Enabled     bool      `json:"enabled"     orm:"enabled"`
+	DisplayName string    `json:"displayName" orm:"display_name"`
+	SortOrder   int       `json:"sortOrder"   orm:"sort_order"`
+	CreatedAt   time.Time `json:"createdAt"   orm:"created_at"`
+	UpdatedAt   time.Time `json:"updatedAt"   orm:"updated_at"`
+}

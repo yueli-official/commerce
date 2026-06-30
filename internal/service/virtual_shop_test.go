@@ -9,6 +9,7 @@ import (
 
 	"github.com/gogf/gf/v2/database/gdb"
 
+	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/model"
 	"platform/services/commerce/internal/service"
 )
@@ -160,6 +161,99 @@ func TestGuestCheckoutReusesRecentPayingOrder(t *testing.T) {
 	}
 	if len(orders) != 1 {
 		t.Fatalf("paying orders = %d, want 1", len(orders))
+	}
+}
+
+func TestGuestCheckoutCancelRequiresBuyerAndUpdatesStatus(t *testing.T) {
+	svc, pg, ctx := newSvc(t)
+	order, err := svc.CreateCheckout(ctx, service.CheckoutDesc{
+		BuyerEmail: "cancel@example.com",
+		Provider:   "alipay",
+		Items: []service.CheckoutItemDesc{{
+			SiteKey:      "shop",
+			ExternalID:   uid("variant-cancel"),
+			VariantID:    uid("variant-id-cancel"),
+			Title:        "Cancel Pack",
+			VariantTitle: "Standard",
+			SKU:          "CANCEL-STD",
+			PriceCents:   990,
+			Currency:     "CNY",
+			DeliveryKind: "asset_file",
+			DeliveryRef:  "asset-cancel",
+			Quantity:     1,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckout: %v", err)
+	}
+	if _, err := svc.CancelCheckout(ctx, order.OrderNo, "", "other@example.com"); !isCoded(err, commerceerr.CodeForbidden) {
+		t.Fatalf("CancelCheckout wrong buyer: want forbidden, got %v", err)
+	}
+	cancelled, err := svc.CancelCheckout(ctx, order.OrderNo, "", " cancel@example.com ")
+	if err != nil {
+		t.Fatalf("CancelCheckout: %v", err)
+	}
+	if cancelled.Status != model.OrderStatusCancelled {
+		t.Fatalf("cancelled status = %q, want cancelled", cancelled.Status)
+	}
+	loaded, err := pg.GetOrderByNo(ctx, order.OrderNo)
+	if err != nil {
+		t.Fatalf("GetOrderByNo: %v", err)
+	}
+	if loaded.Status != model.OrderStatusCancelled {
+		t.Fatalf("db status = %q, want cancelled", loaded.Status)
+	}
+}
+
+func TestPaymentMethodConfigControlsCheckoutCreation(t *testing.T) {
+	svc, _, ctx := newSvc(t)
+	enabled, err := svc.PaymentMethodEnabled(ctx, "alipay")
+	if err != nil {
+		t.Fatalf("PaymentMethodEnabled default: %v", err)
+	}
+	if !enabled {
+		t.Fatal("alipay should be enabled by default migration seed")
+	}
+	methods, err := svc.SavePaymentMethods(ctx, []service.PaymentMethodInput{{
+		Provider:  "alipay",
+		Label:     "Alipay",
+		Enabled:   false,
+		SortOrder: 10,
+	}})
+	if err != nil {
+		t.Fatalf("SavePaymentMethods: %v", err)
+	}
+	foundAlipay := false
+	for _, method := range methods {
+		if method.Provider == "alipay" {
+			foundAlipay = true
+			if method.Enabled {
+				t.Fatal("alipay should be disabled after admin save")
+			}
+		}
+	}
+	if !foundAlipay {
+		t.Fatal("alipay method missing after save")
+	}
+	_, err = svc.CreateCheckout(ctx, service.CheckoutDesc{
+		BuyerEmail: "disabled@example.com",
+		Provider:   "alipay",
+		Items: []service.CheckoutItemDesc{{
+			SiteKey:      "shop",
+			ExternalID:   uid("variant-disabled"),
+			VariantID:    uid("variant-id-disabled"),
+			Title:        "Disabled Pack",
+			VariantTitle: "Standard",
+			SKU:          "DISABLED-STD",
+			PriceCents:   990,
+			Currency:     "CNY",
+			DeliveryKind: "asset_file",
+			DeliveryRef:  "asset-disabled",
+			Quantity:     1,
+		}},
+	})
+	if !isCoded(err, commerceerr.CodeInvalidRequest) {
+		t.Fatalf("CreateCheckout with disabled method: want invalid_request, got %v", err)
 	}
 }
 
