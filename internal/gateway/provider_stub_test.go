@@ -2,6 +2,7 @@ package gateway_test
 
 import (
 	"context"
+	"net/url"
 	"testing"
 
 	"platform/services/commerce/internal/gateway"
@@ -21,6 +22,31 @@ func TestWeChatStubProviderCreatesNativeQRSession(t *testing.T) {
 	}
 	if out.QRCode == "" {
 		t.Fatal("expected QR payload")
+	}
+}
+
+func TestAlipayStubProviderCreatesLocalMockPayURL(t *testing.T) {
+	gw := gateway.NewAlipayStubProvider()
+	out, err := gw.CreatePayment(context.Background(), gateway.CreateIn{
+		OrderNo:     "ORD-ALI",
+		Subject:     "Starter Kit",
+		AmountCents: 9900,
+		Currency:    "CNY",
+		ReturnURL:   "http://localhost:3004/checkout/success",
+	})
+	if err != nil {
+		t.Fatalf("CreatePayment: %v", err)
+	}
+	u, err := url.Parse(out.PayURL)
+	if err != nil {
+		t.Fatalf("parse pay url: %v", err)
+	}
+	if u.Scheme != "http" || u.Host != "localhost:3004" || u.Path != "/checkout/mock-pay" {
+		t.Fatalf("pay url = %q, want local mock pay page", out.PayURL)
+	}
+	q := u.Query()
+	if q.Get("orderNo") != "ORD-ALI" || q.Get("provider") != "alipay" || q.Get("amountCents") != "9900" {
+		t.Fatalf("unexpected query: %v", q)
 	}
 }
 
