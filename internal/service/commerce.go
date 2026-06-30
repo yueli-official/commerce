@@ -228,8 +228,8 @@ func (s *Service) CreateCheckout(ctx context.Context, desc CheckoutDesc) (*model
 	if err != nil {
 		return nil, err
 	}
-	if len(desc.Items) == 0 {
-		return nil, commerceerr.NotifyInvalid("checkout requires at least one item")
+	if err := validateCheckoutItems(desc.Items); err != nil {
+		return nil, err
 	}
 	if desc.Provider == "" {
 		desc.Provider = "alipay"
@@ -293,8 +293,8 @@ func (s *Service) RedeemCheckout(ctx context.Context, desc CheckoutDesc) (*Point
 	if err != nil {
 		return nil, err
 	}
-	if len(desc.Items) == 0 {
-		return nil, commerceerr.NotifyInvalid("checkout requires at least one item")
+	if err := validateCheckoutItems(desc.Items); err != nil {
+		return nil, err
 	}
 
 	var (
@@ -401,6 +401,16 @@ func (s *Service) RedeemCheckout(ctx context.Context, desc CheckoutDesc) (*Point
 		Grant:   &CheckoutGrantResult{Token: rawToken, State: model.DeliveryStateGranted, DeliveryRef: first.DeliveryRefSnapshot},
 		Balance: bal,
 	}, nil
+}
+
+func validateCheckoutItems(items []CheckoutItemDesc) error {
+	if len(items) == 0 {
+		return commerceerr.NotifyInvalid("checkout requires at least one item")
+	}
+	if len(items) > 20 {
+		return commerceerr.NotifyInvalid("checkout supports at most 20 items")
+	}
+	return nil
 }
 
 func (s *Service) SettleCheckout(ctx context.Context, orderNo, provider, providerTxID string, amountCents int) (*CheckoutGrantResult, error) {

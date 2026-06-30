@@ -53,7 +53,7 @@ type CreateCheckoutReq struct {
 	Provider   string            `json:"provider"`
 	ReturnURL  string            `json:"returnUrl"`
 	CancelURL  string            `json:"cancelUrl"`
-	Items      []CheckoutItemReq `json:"items" v:"required|length:1,20"`
+	Items      []CheckoutItemReq `json:"items" v:"required"`
 }
 
 type CreateCheckoutRes struct {
@@ -85,7 +85,7 @@ type CaptureCheckoutRes struct {
 type CreatePointsCheckoutReq struct {
 	g.Meta     `path:"/api/v1/checkouts/points" method:"POST" tags:"Commerce Checkout" summary:"Redeem a virtual-goods checkout with points"`
 	BuyerEmail string            `json:"buyerEmail"`
-	Items      []CheckoutItemReq `json:"items" v:"required|length:1,20"`
+	Items      []CheckoutItemReq `json:"items" v:"required"`
 }
 
 type CreatePointsCheckoutRes struct {
