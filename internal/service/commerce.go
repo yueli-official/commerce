@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	"platform/services/commerce/internal/commerceerr"
@@ -119,11 +120,18 @@ func WithDeliveryConfig(cfg DeliveryConfig) Option {
 	}
 }
 
+func WithDeliveryMailer(mailer DeliveryMailer) Option {
+	return func(s *Service) {
+		s.ConfigureDeliveryMailer(mailer)
+	}
+}
+
 // Service holds the DAO and implements the commerce domain logic.
 type Service struct {
 	db       *dao.PG
 	checkin  CheckinConfig
 	delivery DeliveryConfig
+	mailer   DeliveryMailer
 }
 
 // New constructs a Service.
@@ -142,6 +150,10 @@ func (s *Service) ConfigureDelivery(cfg DeliveryConfig) {
 	cfg.SigningSecret = strings.TrimSpace(cfg.SigningSecret)
 	cfg.PublicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/")
 	s.delivery = cfg
+}
+
+func (s *Service) ConfigureDeliveryMailer(mailer DeliveryMailer) {
+	s.mailer = mailer
 }
 
 // CreateOrder lazily upserts the product from desc, then inserts a new order in
@@ -348,6 +360,7 @@ func (s *Service) RedeemCheckout(ctx context.Context, desc CheckoutDesc) (*Point
 	if err != nil {
 		return nil, err
 	}
+	s.sendDeliveryMail(ctx, o, first, rawToken)
 	return &PointsCheckoutResult{
 		Order:   o,
 		Grant:   &CheckoutGrantResult{Token: rawToken, State: model.DeliveryStateGranted, DeliveryRef: first.DeliveryRefSnapshot},
@@ -413,6 +426,7 @@ func (s *Service) SettleCheckout(ctx context.Context, orderNo, provider, provide
 	if err != nil {
 		return nil, err
 	}
+	s.sendDeliveryMail(ctx, o, first, rawToken)
 	return &CheckoutGrantResult{Token: rawToken, State: model.DeliveryStateGranted, DeliveryRef: first.DeliveryRefSnapshot}, nil
 }
 
@@ -677,21 +691,45 @@ func (s *Service) attachDownloadURL(res *DeliveryResult) {
 	if res.Item != nil && res.Item.DeliveryKindSnapshot != "" && res.Item.DeliveryKindSnapshot != "asset_file" {
 		return
 	}
+	url, expiresAt := s.signedDeliveryURL(res.Token, res.Grant.DeliveryRef)
+	res.DownloadURL = url
+	res.DownloadExpiresAt = &expiresAt
+}
+
+func (s *Service) signedDeliveryURL(token, deliveryRef string) (string, time.Time) {
 	expiresAt := time.Now().UTC().Add(s.delivery.TTL)
 	exp := strconv.FormatInt(expiresAt.Unix(), 10)
-	sig := s.deliverySignature(res.Token, exp, res.Grant.DeliveryRef)
+	sig := s.deliverySignature(token, exp, deliveryRef)
 	q := url.Values{}
 	q.Set("exp", exp)
 	q.Set("sig", sig)
-	path := "/api/v1/delivery/" + url.PathEscape(res.Token) + "/download"
-	res.DownloadURL = s.delivery.PublicBaseURL + path + "?" + q.Encode()
-	res.DownloadExpiresAt = &expiresAt
+	path := "/api/v1/delivery/" + url.PathEscape(token) + "/download"
+	return s.delivery.PublicBaseURL + path + "?" + q.Encode(), expiresAt
 }
 
 func (s *Service) deliverySignature(token, exp, deliveryRef string) string {
 	mac := hmac.New(sha256.New, []byte(s.delivery.SigningSecret))
 	_, _ = fmt.Fprintf(mac, "%s\n%s\n%s", strings.TrimSpace(token), strings.TrimSpace(exp), strings.TrimSpace(deliveryRef))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func (s *Service) sendDeliveryMail(ctx context.Context, order *model.Order, item *model.OrderItem, rawToken string) {
+	if s.mailer == nil || order == nil || item == nil || strings.TrimSpace(order.BuyerEmail) == "" {
+		return
+	}
+	url := ""
+	if strings.TrimSpace(s.delivery.SigningSecret) != "" {
+		url, _ = s.signedDeliveryURL(rawToken, item.DeliveryRefSnapshot)
+	}
+	if err := s.mailer.SendDelivery(ctx, DeliveryMail{
+		To:          order.BuyerEmail,
+		OrderNo:     order.OrderNo,
+		Title:       item.TitleSnapshot,
+		DeliveryRef: item.DeliveryRefSnapshot,
+		DeliveryURL: url,
+	}); err != nil {
+		g.Log().Warningf(ctx, "delivery mail failed order=%s to=%s: %v", order.OrderNo, order.BuyerEmail, err)
+	}
 }
 
 // Entitled reports whether sub is entitled to the product identified by (siteKey, externalID).

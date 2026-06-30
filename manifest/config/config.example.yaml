@@ -42,6 +42,16 @@ commerce:
     public_base_url: ""
     ttl_seconds: 900
 
+  mailer:
+    mode: "dev" # dev | smtp
+    smtp:
+      host: ""
+      port: "465"
+      username: ""
+      password: ""
+      from: ""
+      fromName: ""
+
   alipay:
     app_id: ""
     private_key: ""

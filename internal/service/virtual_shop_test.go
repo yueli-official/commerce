@@ -58,6 +58,13 @@ func TestVirtualShopMigrationShape(t *testing.T) {
 
 func TestGuestCheckoutCreatesBuyerOrderItemAndGrantOnSettle(t *testing.T) {
 	svc, _, ctx := newSvc(t)
+	mailer := &captureDeliveryMailer{}
+	svc.ConfigureDelivery(service.DeliveryConfig{
+		SigningSecret: "test-secret",
+		PublicBaseURL: "https://shop.example",
+		TTL:           time.Minute,
+	})
+	svc.ConfigureDeliveryMailer(mailer)
 	order, err := svc.CreateCheckout(ctx, service.CheckoutDesc{
 		BuyerEmail: " Buyer@Example.COM ",
 		Provider:   "alipay",
@@ -97,6 +104,19 @@ func TestGuestCheckoutCreatesBuyerOrderItemAndGrantOnSettle(t *testing.T) {
 	}
 	if grant.DeliveryRef != "asset-123" {
 		t.Fatalf("delivery ref = %q, want asset-123", grant.DeliveryRef)
+	}
+	if len(mailer.mails) != 1 {
+		t.Fatalf("delivery mails = %d, want 1", len(mailer.mails))
+	}
+	mail := mailer.mails[0]
+	if mail.To != "buyer@example.com" {
+		t.Fatalf("mail to = %q, want buyer@example.com", mail.To)
+	}
+	if mail.OrderNo != order.OrderNo || mail.DeliveryRef != "asset-123" {
+		t.Fatalf("unexpected mail payload: %+v", mail)
+	}
+	if !strings.Contains(mail.DeliveryURL, "/api/v1/delivery/") || !strings.Contains(mail.DeliveryURL, "sig=") {
+		t.Fatalf("mail delivery url missing signed handoff: %q", mail.DeliveryURL)
 	}
 }
 
@@ -270,4 +290,13 @@ func TestPurchasesListsLoggedInDeliveryGrants(t *testing.T) {
 	if purchases[0].Item.SKUSnapshot != "LIB-STD" {
 		t.Fatalf("purchase sku = %q, want LIB-STD", purchases[0].Item.SKUSnapshot)
 	}
+}
+
+type captureDeliveryMailer struct {
+	mails []service.DeliveryMail
+}
+
+func (m *captureDeliveryMailer) SendDelivery(ctx context.Context, in service.DeliveryMail) error {
+	m.mails = append(m.mails, in)
+	return nil
 }

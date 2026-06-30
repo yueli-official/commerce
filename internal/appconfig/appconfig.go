@@ -8,6 +8,7 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 
+	"platform/gokit/mail"
 	"platform/services/commerce/internal/service"
 )
 
@@ -45,6 +46,19 @@ func LoadDelivery(ctx context.Context) service.DeliveryConfig {
 		PublicBaseURL: g.Cfg().MustGet(ctx, "commerce.delivery.public_base_url").String(),
 		TTL:           time.Duration(ttl) * time.Second,
 	}
+}
+
+// BuildDeliveryMailer returns the virtual-goods delivery mail transport. SMTP is
+// enabled only when commerce.mailer.mode=smtp; otherwise mail is logged in dev.
+func BuildDeliveryMailer(ctx context.Context) service.DeliveryMailer {
+	var sender mail.Sender
+	if g.Cfg().MustGet(ctx, "commerce.mailer.mode").String() == "smtp" {
+		s := func(k string) string { return g.Cfg().MustGet(ctx, "commerce.mailer.smtp."+k).String() }
+		sender = mail.NewSMTP(s("host"), s("port"), s("username"), s("password"), s("from"), s("fromName"))
+	} else {
+		sender = mail.NewDev()
+	}
+	return service.NewDeliveryMailSender(sender)
 }
 
 // Alipay holds the Alipay payment provider config.
