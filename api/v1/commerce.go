@@ -33,18 +33,19 @@ type CreateOrderRes struct {
 // ─── POST /api/v1/checkouts ────────────────────────────────────────────────
 
 type CheckoutItemReq struct {
-	SiteKey      string `json:"siteKey" v:"required|length:1,128"`
-	ExternalID   string `json:"externalId" v:"required|length:1,128"`
-	VariantID    string `json:"variantId" v:"required|length:1,128"`
-	Title        string `json:"title" v:"required|length:1,200"`
-	VariantTitle string `json:"variantTitle"`
-	SKU          string `json:"sku"`
-	PriceCents   int    `json:"priceCents"`
-	PointsCost   int    `json:"pointsCost"`
-	Currency     string `json:"currency"`
-	DeliveryKind string `json:"deliveryKind"`
-	DeliveryRef  string `json:"deliveryRef"`
-	Quantity     int    `json:"quantity"`
+	SiteKey               string `json:"siteKey" v:"required|length:1,128"`
+	ExternalID            string `json:"externalId" v:"required|length:1,128"`
+	VariantID             string `json:"variantId" v:"required|length:1,128"`
+	Title                 string `json:"title" v:"required|length:1,200"`
+	VariantTitle          string `json:"variantTitle"`
+	SKU                   string `json:"sku"`
+	PriceCents            int    `json:"priceCents"`
+	PointsCost            int    `json:"pointsCost"`
+	Currency              string `json:"currency"`
+	DeliveryKind          string `json:"deliveryKind"`
+	DeliveryRef           string `json:"deliveryRef"`
+	PurchaseLimitPerBuyer int    `json:"purchaseLimitPerBuyer"`
+	Quantity              int    `json:"quantity"`
 }
 
 type CreateCheckoutReq struct {

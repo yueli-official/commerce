@@ -193,6 +193,28 @@ func (r *PG) FindReusableCheckout(ctx context.Context, buyerSub, buyerEmail, pro
 	return o, nil
 }
 
+func (r *PG) CompletedCheckoutQuantityByVariant(ctx context.Context, buyerSub, buyerEmail, variantID string) (int, error) {
+	val, err := r.db.GetValue(ctx, `
+SELECT COALESCE(SUM(oi.quantity), 0)
+FROM orders o
+JOIN order_items oi ON oi.order_id = o.id
+WHERE oi.variant_id = ?
+  AND o.status IN (?, ?)
+  AND ((? <> '' AND o.buyer_sub = ?) OR (? <> '' AND lower(o.buyer_email) = ?))`,
+		variantID,
+		model.OrderStatusPaid,
+		model.OrderStatusFulfilled,
+		buyerSub,
+		buyerSub,
+		buyerEmail,
+		buyerEmail,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return val.Int(), nil
+}
+
 func (r *PG) InsertCheckoutOrderTx(ctx context.Context, tx gdb.TX, o *model.Order, items []*model.OrderItem) error {
 	if o.ID == "" {
 		o.ID = uuid.NewString()

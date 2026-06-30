@@ -48,18 +48,19 @@ type CheckoutDesc struct {
 }
 
 type CheckoutItemDesc struct {
-	SiteKey      string
-	ExternalID   string
-	VariantID    string
-	Title        string
-	VariantTitle string
-	SKU          string
-	PriceCents   int
-	PointsCost   int
-	Currency     string
-	DeliveryKind string
-	DeliveryRef  string
-	Quantity     int
+	SiteKey               string
+	ExternalID            string
+	VariantID             string
+	Title                 string
+	VariantTitle          string
+	SKU                   string
+	PriceCents            int
+	PointsCost            int
+	Currency              string
+	DeliveryKind          string
+	DeliveryRef           string
+	PurchaseLimitPerBuyer int
+	Quantity              int
 }
 
 type CheckoutGrantResult struct {
@@ -272,6 +273,9 @@ func (s *Service) CreateCheckout(ctx context.Context, desc CheckoutDesc) (*model
 	if err := validateCheckoutItems(desc.Items); err != nil {
 		return nil, err
 	}
+	if err := s.enforcePurchaseLimits(ctx, buyer, desc.Items); err != nil {
+		return nil, err
+	}
 	if desc.Provider == "" {
 		desc.Provider = "alipay"
 	}
@@ -367,6 +371,9 @@ func (s *Service) RedeemCheckout(ctx context.Context, desc CheckoutDesc) (*Point
 		return nil, err
 	}
 	if err := validateCheckoutItems(desc.Items); err != nil {
+		return nil, err
+	}
+	if err := s.enforcePurchaseLimits(ctx, buyer, desc.Items); err != nil {
 		return nil, err
 	}
 
@@ -482,6 +489,31 @@ func validateCheckoutItems(items []CheckoutItemDesc) error {
 	}
 	if len(items) > 20 {
 		return commerceerr.NotifyInvalid("checkout supports at most 20 items")
+	}
+	return nil
+}
+
+func (s *Service) enforcePurchaseLimits(ctx context.Context, buyer *model.Buyer, items []CheckoutItemDesc) error {
+	for _, item := range items {
+		if item.PurchaseLimitPerBuyer <= 0 {
+			continue
+		}
+		quantity := item.Quantity
+		if quantity <= 0 {
+			quantity = 1
+		}
+		purchased, err := s.db.CompletedCheckoutQuantityByVariant(
+			ctx,
+			strings.TrimSpace(buyer.BuyerSub),
+			normalizeEmail(buyer.BuyerEmail),
+			strings.TrimSpace(item.VariantID),
+		)
+		if err != nil {
+			return err
+		}
+		if purchased+quantity > item.PurchaseLimitPerBuyer {
+			return commerceerr.NotifyInvalid("该虚拟商品已购买，请在我的订单中查看交付")
+		}
 	}
 	return nil
 }

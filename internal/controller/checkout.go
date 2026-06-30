@@ -248,7 +248,7 @@ func checkoutItems(items []v1.CheckoutItemReq) []service.CheckoutItemDesc {
 			SiteKey: item.SiteKey, ExternalID: item.ExternalID, VariantID: item.VariantID,
 			Title: item.Title, VariantTitle: item.VariantTitle, SKU: item.SKU,
 			PriceCents: item.PriceCents, PointsCost: item.PointsCost, Currency: item.Currency,
-			DeliveryKind: item.DeliveryKind, DeliveryRef: item.DeliveryRef, Quantity: item.Quantity,
+			DeliveryKind: item.DeliveryKind, DeliveryRef: item.DeliveryRef, PurchaseLimitPerBuyer: item.PurchaseLimitPerBuyer, Quantity: item.Quantity,
 		})
 	}
 	return out
