@@ -292,6 +292,127 @@ func TestPurchasesListsLoggedInDeliveryGrants(t *testing.T) {
 	}
 }
 
+func TestAdminOrderSupportActions(t *testing.T) {
+	svc, _, ctx := newSvc(t)
+	mailer := &captureDeliveryMailer{}
+	svc.ConfigureDeliveryMailer(mailer)
+	order, err := svc.CreateCheckout(ctx, service.CheckoutDesc{
+		BuyerEmail: "support@example.com",
+		Provider:   "alipay",
+		Items: []service.CheckoutItemDesc{{
+			SiteKey:      "shop",
+			ExternalID:   uid("variant-support"),
+			VariantID:    uid("variant-id-support"),
+			Title:        "Support Pack",
+			VariantTitle: "Standard",
+			SKU:          "SUP-STD",
+			PriceCents:   2500,
+			Currency:     "CNY",
+			DeliveryKind: "asset_file",
+			DeliveryRef:  "asset-support",
+			Quantity:     1,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckout: %v", err)
+	}
+	if _, err := svc.SettleCheckout(ctx, order.OrderNo, "alipay", "pay-tx-support", 2500); err != nil {
+		t.Fatalf("SettleCheckout: %v", err)
+	}
+	if len(mailer.mails) != 1 {
+		t.Fatalf("delivery mails after settle = %d, want 1", len(mailer.mails))
+	}
+
+	resent, err := svc.ResendDelivery(ctx, order.OrderNo)
+	if err != nil {
+		t.Fatalf("ResendDelivery: %v", err)
+	}
+	if resent.Token == "" || resent.DeliveryRef != "asset-support" {
+		t.Fatalf("unexpected resend grant: %+v", resent)
+	}
+	if len(mailer.mails) != 2 {
+		t.Fatalf("delivery mails after resend = %d, want 2", len(mailer.mails))
+	}
+	detail, err := svc.OrderDetail(ctx, order.OrderNo)
+	if err != nil {
+		t.Fatalf("OrderDetail after resend: %v", err)
+	}
+	if got := countGrantsByState(detail.Grants, "active"); got != 2 {
+		t.Fatalf("active grants after resend = %d, want 2", got)
+	}
+	if got := countEventsByType(detail.Events, "delivery_grant"); got != 1 {
+		t.Fatalf("delivery_grant events after resend = %d, want 1", got)
+	}
+
+	revoked, err := svc.RevokeDelivery(ctx, order.OrderNo)
+	if err != nil {
+		t.Fatalf("RevokeDelivery: %v", err)
+	}
+	if revoked != 2 {
+		t.Fatalf("revoked grants = %d, want 2", revoked)
+	}
+	detail, err = svc.OrderDetail(ctx, order.OrderNo)
+	if err != nil {
+		t.Fatalf("OrderDetail after revoke: %v", err)
+	}
+	if got := countGrantsByState(detail.Grants, "revoked"); got != 2 {
+		t.Fatalf("revoked grants after revoke = %d, want 2", got)
+	}
+	if got := countEventsByType(detail.Events, "delivery_revoke"); got != 1 {
+		t.Fatalf("delivery_revoke events = %d, want 1", got)
+	}
+
+	manual, err := svc.GrantDelivery(ctx, order.OrderNo)
+	if err != nil {
+		t.Fatalf("GrantDelivery: %v", err)
+	}
+	if manual.Token == "" || manual.DeliveryRef != "asset-support" {
+		t.Fatalf("unexpected manual grant: %+v", manual)
+	}
+	if len(mailer.mails) != 2 {
+		t.Fatalf("delivery mails after manual grant = %d, want 2", len(mailer.mails))
+	}
+	if err := svc.MarkRefunded(ctx, order.OrderNo, "refund-support"); err != nil {
+		t.Fatalf("MarkRefunded: %v", err)
+	}
+	detail, err = svc.OrderDetail(ctx, order.OrderNo)
+	if err != nil {
+		t.Fatalf("OrderDetail after refund: %v", err)
+	}
+	if detail.Order.Status != model.OrderStatusRefunded {
+		t.Fatalf("order status = %q, want refunded", detail.Order.Status)
+	}
+	if detail.Order.DeliveryState != model.DeliveryStateRevoked {
+		t.Fatalf("delivery state = %q, want revoked", detail.Order.DeliveryState)
+	}
+	if got := countGrantsByState(detail.Grants, "active"); got != 0 {
+		t.Fatalf("active grants after refund = %d, want 0", got)
+	}
+	if got := countEventsByType(detail.Events, "refund"); got != 1 {
+		t.Fatalf("refund events = %d, want 1", got)
+	}
+}
+
+func countGrantsByState(grants []*model.DeliveryGrant, state string) int {
+	count := 0
+	for _, grant := range grants {
+		if grant.State == state {
+			count++
+		}
+	}
+	return count
+}
+
+func countEventsByType(events []*model.PaymentEvent, eventType string) int {
+	count := 0
+	for _, event := range events {
+		if event.EventType == eventType {
+			count++
+		}
+	}
+	return count
+}
+
 type captureDeliveryMailer struct {
 	mails []service.DeliveryMail
 }

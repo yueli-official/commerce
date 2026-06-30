@@ -73,7 +73,7 @@ func Configure(s *ghttp.Server, d Deps) {
 	accessCtrl := controller.NewAccess(svc)
 	checkinCtrl := controller.NewCheckin(svc)
 	creditsCtrl := controller.NewCredits(svc)
-	adminOrderCtrl := controller.NewAdminOrder(svc)
+	adminOrderCtrl := controller.NewAdminOrder(svc, d.Registry)
 	s.Group("/", func(grp *ghttp.RouterGroup) {
 		grp.Middleware(ghttpx.Middleware, authjwt.Middleware(d.Verifier))
 		grp.Bind(orderCtrl)

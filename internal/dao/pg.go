@@ -365,6 +365,49 @@ func (r *PG) DeliveryGrantsByBuyerSub(ctx context.Context, sub string, limit, of
 	return grants, err
 }
 
+func (r *PG) DeliveryGrantsByOrderID(ctx context.Context, orderID string) ([]*model.DeliveryGrant, error) {
+	var grants []*model.DeliveryGrant
+	err := r.db.Model("delivery_grants").Ctx(ctx).
+		Where("order_id", orderID).
+		Order("created_at DESC").
+		Scan(&grants)
+	return grants, err
+}
+
+func (r *PG) PaymentEventsByOrderID(ctx context.Context, orderID string) ([]*model.PaymentEvent, error) {
+	var events []*model.PaymentEvent
+	err := r.db.Model("payment_events").Ctx(ctx).
+		Where("order_id", orderID).
+		Order("created_at DESC").
+		Scan(&events)
+	return events, err
+}
+
+func (r *PG) RevokeDeliveryGrantsByOrderIDTx(ctx context.Context, tx gdb.TX, orderID string) (int64, error) {
+	res, err := tx.Ctx(ctx).Exec(`
+UPDATE delivery_grants
+   SET state = 'revoked', revoked_at = now()
+ WHERE order_id = ? AND state = 'active'`, orderID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+func (r *PG) MarkOrderRefundedTx(ctx context.Context, tx gdb.TX, orderID, providerRefundID string) error {
+	data := g.Map{
+		"status":         model.OrderStatusRefunded,
+		"delivery_state": model.DeliveryStateRevoked,
+		"updated_at":     gtime.Now(),
+	}
+	if providerRefundID != "" {
+		data["provider_tx_id"] = providerRefundID
+	}
+	_, err := tx.Ctx(ctx).Model("orders").Where("id", orderID).Data(data).Update()
+	return err
+}
+
 // ConditionalUpdateOrderStatusTx atomically transitions an order to newStatus only if
 // its current status matches fromStatus. Returns (true, nil) when the row was updated,
 // (false, nil) when no row matched (race lost or state already changed), and

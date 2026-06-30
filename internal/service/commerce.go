@@ -87,6 +87,13 @@ type DeliveryDownloadResult struct {
 	ExpiresAt   time.Time
 }
 
+type OrderDetailResult struct {
+	Order  *model.Order
+	Items  []*model.OrderItem
+	Events []*model.PaymentEvent
+	Grants []*model.DeliveryGrant
+}
+
 // EntitledResult is the answer to an Entitled query.
 type EntitledResult struct {
 	Entitled bool
@@ -607,6 +614,114 @@ func (s *Service) ListOrders(ctx context.Context, status, q string, limit, offse
 
 func (s *Service) OrderItems(ctx context.Context, orderID string) ([]*model.OrderItem, error) {
 	return s.db.OrderItems(ctx, orderID)
+}
+
+func (s *Service) OrderDetail(ctx context.Context, orderNo string) (*OrderDetailResult, error) {
+	order, err := s.GetOrderByNo(ctx, orderNo)
+	if err != nil {
+		return nil, err
+	}
+	items, err := s.db.OrderItems(ctx, order.ID)
+	if err != nil {
+		return nil, err
+	}
+	events, err := s.db.PaymentEventsByOrderID(ctx, order.ID)
+	if err != nil {
+		return nil, err
+	}
+	grants, err := s.db.DeliveryGrantsByOrderID(ctx, order.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &OrderDetailResult{Order: order, Items: items, Events: events, Grants: grants}, nil
+}
+
+func (s *Service) ResendDelivery(ctx context.Context, orderNo string) (*CheckoutGrantResult, error) {
+	return s.createManualDeliveryGrant(ctx, orderNo, true)
+}
+
+func (s *Service) GrantDelivery(ctx context.Context, orderNo string) (*CheckoutGrantResult, error) {
+	return s.createManualDeliveryGrant(ctx, orderNo, false)
+}
+
+func (s *Service) RevokeDelivery(ctx context.Context, orderNo string) (int64, error) {
+	order, err := s.GetOrderByNo(ctx, orderNo)
+	if err != nil {
+		return 0, err
+	}
+	var revoked int64
+	err = s.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		n, err := s.db.RevokeDeliveryGrantsByOrderIDTx(ctx, tx, order.ID)
+		if err != nil {
+			return err
+		}
+		revoked = n
+		return s.db.InsertPaymentEventTx(ctx, tx, &model.PaymentEvent{
+			OrderID: order.ID, Provider: defaultString(order.PaymentProvider, "admin"), EventType: "delivery_revoke",
+			ProviderEventID: "", AmountCents: order.AmountCents, Success: true, Message: "delivery grants revoked by admin",
+		})
+	})
+	return revoked, err
+}
+
+func (s *Service) MarkRefunded(ctx context.Context, orderNo, providerRefundID string) error {
+	order, err := s.GetOrderByNo(ctx, orderNo)
+	if err != nil {
+		return err
+	}
+	return s.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		if _, err := s.db.RevokeDeliveryGrantsByOrderIDTx(ctx, tx, order.ID); err != nil {
+			return err
+		}
+		if err := s.db.MarkOrderRefundedTx(ctx, tx, order.ID, providerRefundID); err != nil {
+			return err
+		}
+		return s.db.InsertPaymentEventTx(ctx, tx, &model.PaymentEvent{
+			OrderID: order.ID, Provider: defaultString(order.PaymentProvider, "admin"), EventType: "refund",
+			ProviderEventID: providerRefundID, AmountCents: order.AmountCents, Success: true, Message: "order refunded",
+		})
+	})
+}
+
+func (s *Service) createManualDeliveryGrant(ctx context.Context, orderNo string, sendMail bool) (*CheckoutGrantResult, error) {
+	order, err := s.GetOrderByNo(ctx, orderNo)
+	if err != nil {
+		return nil, err
+	}
+	if order.Status != model.OrderStatusFulfilled && order.Status != model.OrderStatusPaid {
+		return nil, commerceerr.OrderInvalidState(order.Status, model.OrderStatusFulfilled)
+	}
+	items, err := s.db.OrderItems(ctx, order.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, commerceerr.NotifyInvalid("order has no items")
+	}
+	rawToken, tokenHash, err := newDeliveryToken()
+	if err != nil {
+		return nil, err
+	}
+	first := items[0]
+	err = s.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		if err := s.db.InsertDeliveryGrantTx(ctx, tx, &model.DeliveryGrant{
+			OrderID: order.ID, OrderItemID: first.ID, BuyerSub: order.BuyerSub, BuyerEmail: order.BuyerEmail,
+			TokenHash: tokenHash, DeliveryRef: first.DeliveryRefSnapshot, State: "active",
+		}); err != nil {
+			return err
+		}
+		return s.db.InsertPaymentEventTx(ctx, tx, &model.PaymentEvent{
+			OrderID: order.ID, Provider: "admin", EventType: "delivery_grant",
+			ProviderEventID: "", AmountCents: order.AmountCents, Success: true, Message: "delivery grant created by admin",
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if sendMail {
+		s.sendDeliveryMail(ctx, order, first, rawToken)
+	}
+	return &CheckoutGrantResult{Token: rawToken, State: model.DeliveryStateGranted, DeliveryRef: first.DeliveryRefSnapshot}, nil
 }
 
 func (s *Service) DeliveryByToken(ctx context.Context, token string) (*DeliveryResult, error) {

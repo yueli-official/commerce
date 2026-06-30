@@ -155,19 +155,44 @@ type AdminOrderItemView struct {
 	DeliveryRef  string `json:"deliveryRef"`
 }
 
+type AdminPaymentEventView struct {
+	ID              string `json:"id"`
+	Provider        string `json:"provider"`
+	EventType       string `json:"eventType"`
+	ProviderEventID string `json:"providerEventId"`
+	AmountCents     int    `json:"amountCents"`
+	Success         bool   `json:"success"`
+	Message         string `json:"message"`
+	CreatedAt       string `json:"createdAt"`
+}
+
+type AdminDeliveryGrantView struct {
+	ID          string `json:"id"`
+	OrderItemID string `json:"orderItemId"`
+	BuyerSub    string `json:"buyerSub,omitempty"`
+	BuyerEmail  string `json:"buyerEmail,omitempty"`
+	DeliveryRef string `json:"deliveryRef"`
+	State       string `json:"state"`
+	CreatedAt   string `json:"createdAt"`
+	ExpiresAt   string `json:"expiresAt,omitempty"`
+	RevokedAt   string `json:"revokedAt,omitempty"`
+}
+
 type AdminOrderView struct {
-	ID              string               `json:"id"`
-	OrderNo         string               `json:"orderNo"`
-	Sub             string               `json:"sub,omitempty"`
-	BuyerSub        string               `json:"buyerSub,omitempty"`
-	BuyerEmail      string               `json:"buyerEmail,omitempty"`
-	AmountCents     int                  `json:"amountCents"`
-	Currency        string               `json:"currency"`
-	Status          string               `json:"status"`
-	PaymentProvider string               `json:"paymentProvider"`
-	DeliveryState   string               `json:"deliveryState"`
-	CreatedAt       string               `json:"createdAt"`
-	Items           []AdminOrderItemView `json:"items,omitempty"`
+	ID              string                   `json:"id"`
+	OrderNo         string                   `json:"orderNo"`
+	Sub             string                   `json:"sub,omitempty"`
+	BuyerSub        string                   `json:"buyerSub,omitempty"`
+	BuyerEmail      string                   `json:"buyerEmail,omitempty"`
+	AmountCents     int                      `json:"amountCents"`
+	Currency        string                   `json:"currency"`
+	Status          string                   `json:"status"`
+	PaymentProvider string                   `json:"paymentProvider"`
+	DeliveryState   string                   `json:"deliveryState"`
+	CreatedAt       string                   `json:"createdAt"`
+	Items           []AdminOrderItemView     `json:"items,omitempty"`
+	Events          []AdminPaymentEventView  `json:"events,omitempty"`
+	Grants          []AdminDeliveryGrantView `json:"grants,omitempty"`
 }
 
 type AdminListOrdersReq struct {
@@ -180,6 +205,55 @@ type AdminListOrdersReq struct {
 
 type AdminListOrdersRes struct {
 	Orders []AdminOrderView `json:"orders"`
+}
+
+type AdminOrderDetailReq struct {
+	g.Meta  `path:"/api/v1/admin/commerce/orders/{orderNo}" method:"GET" tags:"Admin Commerce" summary:"Get commerce order detail"`
+	OrderNo string `p:"orderNo" v:"required"`
+}
+
+type AdminOrderDetailRes struct {
+	Order AdminOrderView `json:"order"`
+}
+
+type AdminOrderDeliveryResendReq struct {
+	g.Meta  `path:"/api/v1/admin/commerce/orders/{orderNo}/delivery/resend" method:"POST" tags:"Admin Commerce" summary:"Resend delivery email"`
+	OrderNo string `p:"orderNo" v:"required"`
+}
+
+type AdminOrderDeliveryResendRes struct {
+	Token       string `json:"token,omitempty"`
+	DeliveryRef string `json:"deliveryRef,omitempty"`
+}
+
+type AdminOrderDeliveryRevokeReq struct {
+	g.Meta  `path:"/api/v1/admin/commerce/orders/{orderNo}/delivery/revoke" method:"POST" tags:"Admin Commerce" summary:"Revoke active delivery grants"`
+	OrderNo string `p:"orderNo" v:"required"`
+}
+
+type AdminOrderDeliveryRevokeRes struct {
+	Revoked int `json:"revoked"`
+}
+
+type AdminOrderDeliveryGrantReq struct {
+	g.Meta  `path:"/api/v1/admin/commerce/orders/{orderNo}/delivery/grant" method:"POST" tags:"Admin Commerce" summary:"Create a manual delivery grant"`
+	OrderNo string `p:"orderNo" v:"required"`
+}
+
+type AdminOrderDeliveryGrantRes struct {
+	Token       string `json:"token,omitempty"`
+	DeliveryRef string `json:"deliveryRef,omitempty"`
+}
+
+type AdminOrderRefundReq struct {
+	g.Meta  `path:"/api/v1/admin/commerce/orders/{orderNo}/refund" method:"POST" tags:"Admin Commerce" summary:"Refund an order through its payment provider"`
+	OrderNo string `p:"orderNo" v:"required"`
+	Reason  string `json:"reason"`
+}
+
+type AdminOrderRefundRes struct {
+	ProviderID string `json:"providerId"`
+	Status     string `json:"status"`
 }
 
 // ─── GET /api/v1/access ─────────────────────────────────────────────────────
