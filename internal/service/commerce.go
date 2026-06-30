@@ -62,6 +62,18 @@ type CheckoutGrantResult struct {
 	DeliveryRef string
 }
 
+type DeliveryResult struct {
+	Grant *model.DeliveryGrant
+	Order *model.Order
+	Item  *model.OrderItem
+}
+
+type PointsCheckoutResult struct {
+	Order   *model.Order
+	Grant   *CheckoutGrantResult
+	Balance int64
+}
+
 // EntitledResult is the answer to an Entitled query.
 type EntitledResult struct {
 	Entitled bool
@@ -183,6 +195,124 @@ func (s *Service) CreateCheckout(ctx context.Context, desc CheckoutDesc) (*model
 		return nil, err
 	}
 	return o, nil
+}
+
+func (s *Service) RedeemCheckout(ctx context.Context, desc CheckoutDesc) (*PointsCheckoutResult, error) {
+	if strings.TrimSpace(desc.BuyerSub) == "" {
+		return nil, commerceerr.Forbidden()
+	}
+	desc.Provider = model.ProductKindPoints
+	buyer, err := s.resolveBuyer(ctx, desc)
+	if err != nil {
+		return nil, err
+	}
+	if len(desc.Items) == 0 {
+		return nil, commerceerr.NotifyInvalid("checkout requires at least one item")
+	}
+
+	var (
+		totalPoints    int
+		items          []*model.OrderItem
+		firstProductID string
+	)
+	for _, in := range desc.Items {
+		if in.Quantity <= 0 {
+			in.Quantity = 1
+		}
+		if in.PointsCost < 1 {
+			return nil, commerceerr.InvalidRequest("pointsCost is required for a points checkout")
+		}
+		if in.PriceCents < 0 {
+			return nil, commerceerr.NotifyInvalid("checkout item price cannot be negative")
+		}
+		totalPoints += in.PointsCost * in.Quantity
+		p := &model.Product{
+			SiteKey: in.SiteKey, ExternalID: in.ExternalID, Kind: model.ProductKindPoints,
+			Title: in.Title, PriceCents: in.PriceCents, PointsCost: in.PointsCost, Currency: defaultString(in.Currency, "POINTS"),
+			Status: model.ProductStatusActive,
+		}
+		if err := s.db.UpsertProduct(ctx, p); err != nil {
+			return nil, err
+		}
+		if firstProductID == "" {
+			firstProductID = p.ID
+		}
+		items = append(items, &model.OrderItem{
+			SiteKey: in.SiteKey, ExternalID: in.ExternalID, ProductID: p.ID, VariantID: in.VariantID,
+			TitleSnapshot: in.Title, VariantTitleSnapshot: in.VariantTitle, SKUSnapshot: in.SKU,
+			Quantity: in.Quantity, UnitPriceCents: in.PriceCents, UnitPointsCost: in.PointsCost,
+			Currency: defaultString(in.Currency, "POINTS"), DeliveryKindSnapshot: defaultString(in.DeliveryKind, "asset_file"),
+			DeliveryRefSnapshot: in.DeliveryRef,
+		})
+	}
+	if totalPoints <= 0 {
+		return nil, commerceerr.InvalidRequest("pointsCost is required for a points checkout")
+	}
+
+	rawToken, tokenHash, err := newDeliveryToken()
+	if err != nil {
+		return nil, err
+	}
+	o := &model.Order{
+		OrderNo: NewOrderNo(), Sub: buyer.BuyerSub, ProductID: firstProductID, AmountCents: 0, Currency: "POINTS",
+		Status: model.OrderStatusPaying, Gateway: model.ProductKindPoints, BuyerID: buyer.ID, BuyerSub: buyer.BuyerSub, BuyerEmail: buyer.BuyerEmail,
+		PaymentProvider: model.ProductKindPoints, DeliveryState: model.DeliveryStatePending,
+	}
+	now := gtime.New(time.Now())
+	first := items[0]
+	spendRef := ""
+	err = s.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		if err := s.db.InsertCheckoutOrderTx(ctx, tx, o, items); err != nil {
+			return err
+		}
+		pointsToSpend := 0
+		for _, item := range items {
+			inserted, err := s.db.GrantEntitlementTx(ctx, tx, &model.Entitlement{
+				Sub: itemBuyerSub(o), ProductID: item.ProductID, Source: model.EntitlementSourcePoints, OrderID: &o.ID,
+			})
+			if err != nil {
+				return err
+			}
+			if inserted {
+				pointsToSpend += item.UnitPointsCost * item.Quantity
+			}
+		}
+		if pointsToSpend > 0 {
+			spendRef = o.ID
+			ok, err := s.db.SpendCreditsTx(ctx, tx, buyer.BuyerSub, pointsToSpend, model.CreditsSourceRedeem, spendRef)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return commerceerr.InsufficientPoints(pointsToSpend)
+			}
+		}
+		if err := s.db.FulfillCheckoutTx(ctx, tx, o.ID, "POINTS-"+o.OrderNo, now); err != nil {
+			return err
+		}
+		if err := s.db.InsertPaymentEventTx(ctx, tx, &model.PaymentEvent{
+			OrderID: o.ID, Provider: model.ProductKindPoints, EventType: "redeem", ProviderEventID: spendRef,
+			AmountCents: 0, Success: true, Message: "points checkout redeemed",
+		}); err != nil {
+			return err
+		}
+		return s.db.InsertDeliveryGrantTx(ctx, tx, &model.DeliveryGrant{
+			OrderID: o.ID, OrderItemID: first.ID, BuyerSub: o.BuyerSub, BuyerEmail: o.BuyerEmail,
+			TokenHash: tokenHash, DeliveryRef: first.DeliveryRefSnapshot, State: "active",
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	bal, err := s.db.GetBalance(ctx, buyer.BuyerSub)
+	if err != nil {
+		return nil, err
+	}
+	return &PointsCheckoutResult{
+		Order:   o,
+		Grant:   &CheckoutGrantResult{Token: rawToken, State: model.DeliveryStateGranted, DeliveryRef: first.DeliveryRefSnapshot},
+		Balance: bal,
+	}, nil
 }
 
 func (s *Service) SettleCheckout(ctx context.Context, orderNo, provider, providerTxID string, amountCents int) (*CheckoutGrantResult, error) {
@@ -320,8 +450,12 @@ func newDeliveryToken() (string, string, error) {
 		return "", "", err
 	}
 	raw := base64.RawURLEncoding.EncodeToString(b[:])
+	return raw, hashDeliveryToken(raw), nil
+}
+
+func hashDeliveryToken(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
-	return raw, hex.EncodeToString(sum[:]), nil
+	return hex.EncodeToString(sum[:])
 }
 
 // MarkPaid transitions an order from "paying" to "paid" and grants the entitlement.
@@ -419,6 +553,51 @@ func (s *Service) ListOrders(ctx context.Context, status, q string, limit, offse
 
 func (s *Service) OrderItems(ctx context.Context, orderID string) ([]*model.OrderItem, error) {
 	return s.db.OrderItems(ctx, orderID)
+}
+
+func (s *Service) DeliveryByToken(ctx context.Context, token string) (*DeliveryResult, error) {
+	grant, err := s.db.DeliveryGrantByTokenHash(ctx, hashDeliveryToken(strings.TrimSpace(token)))
+	if err != nil {
+		return nil, err
+	}
+	if grant == nil {
+		return nil, commerceerr.OrderNotFound("delivery")
+	}
+	return s.deliveryResult(ctx, grant)
+}
+
+func (s *Service) Purchases(ctx context.Context, sub string, limit, offset int) ([]*DeliveryResult, error) {
+	grants, err := s.db.DeliveryGrantsByBuyerSub(ctx, strings.TrimSpace(sub), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*DeliveryResult, 0, len(grants))
+	for _, grant := range grants {
+		res, err := s.deliveryResult(ctx, grant)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, res)
+	}
+	return out, nil
+}
+
+func (s *Service) deliveryResult(ctx context.Context, grant *model.DeliveryGrant) (*DeliveryResult, error) {
+	order, err := s.db.GetOrderByID(ctx, grant.OrderID)
+	if err != nil {
+		return nil, err
+	}
+	if order == nil {
+		return nil, commerceerr.OrderNotFound(grant.OrderID)
+	}
+	var item *model.OrderItem
+	if grant.OrderItemID != "" {
+		item, err = s.db.OrderItemByID(ctx, grant.OrderItemID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &DeliveryResult{Grant: grant, Order: order, Item: item}, nil
 }
 
 // Entitled reports whether sub is entitled to the product identified by (siteKey, externalID).

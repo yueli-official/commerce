@@ -94,6 +94,14 @@ func (r *PG) GetOrderByNo(ctx context.Context, orderNo string) (*model.Order, er
 	return o, nil
 }
 
+func (r *PG) GetOrderByID(ctx context.Context, id string) (*model.Order, error) {
+	var o *model.Order
+	if err := r.db.Model("orders").Ctx(ctx).Where("id", id).Limit(1).Scan(&o); err != nil {
+		return nil, err
+	}
+	return o, nil
+}
+
 func (r *PG) ListOrders(ctx context.Context, status, q string, limit, offset int) ([]*model.Order, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
@@ -158,39 +166,46 @@ func (r *PG) InsertCheckoutOrder(ctx context.Context, o *model.Order, items []*m
 		o.ID = uuid.NewString()
 	}
 	return r.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		_, err := tx.Ctx(ctx).Exec(`
+		return r.InsertCheckoutOrderTx(ctx, tx, o, items)
+	})
+}
+
+func (r *PG) InsertCheckoutOrderTx(ctx context.Context, tx gdb.TX, o *model.Order, items []*model.OrderItem) error {
+	if o.ID == "" {
+		o.ID = uuid.NewString()
+	}
+	_, err := tx.Ctx(ctx).Exec(`
 INSERT INTO orders (
     id, order_no, sub, product_id, amount_cents, currency, status, gateway,
     buyer_id, buyer_sub, buyer_email, payment_provider, payment_session_id,
     return_url, cancel_url, delivery_state
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			o.ID, o.OrderNo, nullableString(o.Sub), o.ProductID, o.AmountCents, o.Currency, o.Status, o.Gateway,
-			nullableString(o.BuyerID), nullableString(o.BuyerSub), nullableString(o.BuyerEmail), o.PaymentProvider, nullableString(o.PaymentSessionID),
-			o.ReturnURL, o.CancelURL, o.DeliveryState,
-		)
-		if err != nil {
-			return err
+		o.ID, o.OrderNo, nullableString(o.Sub), o.ProductID, o.AmountCents, o.Currency, o.Status, o.Gateway,
+		nullableString(o.BuyerID), nullableString(o.BuyerSub), nullableString(o.BuyerEmail), o.PaymentProvider, nullableString(o.PaymentSessionID),
+		o.ReturnURL, o.CancelURL, o.DeliveryState,
+	)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.ID == "" {
+			item.ID = uuid.NewString()
 		}
-		for _, item := range items {
-			if item.ID == "" {
-				item.ID = uuid.NewString()
-			}
-			item.OrderID = o.ID
-			if _, err := tx.Ctx(ctx).Exec(`
+		item.OrderID = o.ID
+		if _, err := tx.Ctx(ctx).Exec(`
 INSERT INTO order_items (
     id, order_id, site_key, external_id, product_id, variant_id, title_snapshot,
     variant_title_snapshot, sku_snapshot, quantity, unit_price_cents, unit_points_cost,
     currency, delivery_kind_snapshot, delivery_ref_snapshot
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				item.ID, item.OrderID, item.SiteKey, item.ExternalID, nullableString(item.ProductID), item.VariantID, item.TitleSnapshot,
-				item.VariantTitleSnapshot, item.SKUSnapshot, item.Quantity, item.UnitPriceCents, item.UnitPointsCost,
-				item.Currency, item.DeliveryKindSnapshot, item.DeliveryRefSnapshot,
-			); err != nil {
-				return err
-			}
+			item.ID, item.OrderID, item.SiteKey, item.ExternalID, nullableString(item.ProductID), item.VariantID, item.TitleSnapshot,
+			item.VariantTitleSnapshot, item.SKUSnapshot, item.Quantity, item.UnitPriceCents, item.UnitPointsCost,
+			item.Currency, item.DeliveryKindSnapshot, item.DeliveryRefSnapshot,
+		); err != nil {
+			return err
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
 func (r *PG) OrderItems(ctx context.Context, orderID string) ([]*model.OrderItem, error) {
@@ -199,6 +214,14 @@ func (r *PG) OrderItems(ctx context.Context, orderID string) ([]*model.OrderItem
 		return nil, err
 	}
 	return items, nil
+}
+
+func (r *PG) OrderItemByID(ctx context.Context, id string) (*model.OrderItem, error) {
+	var item *model.OrderItem
+	if err := r.db.Model("order_items").Ctx(ctx).Where("id", id).Limit(1).Scan(&item); err != nil {
+		return nil, err
+	}
+	return item, nil
 }
 
 func (r *PG) UpdatePaymentSession(ctx context.Context, orderID, sessionID string) error {
@@ -308,6 +331,38 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		grant.TokenHash, grant.DeliveryRef, grant.State, grant.ExpiresAt,
 	)
 	return err
+}
+
+func (r *PG) DeliveryGrantByTokenHash(ctx context.Context, tokenHash string) (*model.DeliveryGrant, error) {
+	var grant *model.DeliveryGrant
+	err := r.db.Model("delivery_grants").Ctx(ctx).
+		Where("token_hash", tokenHash).
+		Where("state", "active").
+		Where("(expires_at IS NULL OR expires_at > now())").
+		Limit(1).
+		Scan(&grant)
+	if err != nil {
+		return nil, err
+	}
+	return grant, nil
+}
+
+func (r *PG) DeliveryGrantsByBuyerSub(ctx context.Context, sub string, limit, offset int) ([]*model.DeliveryGrant, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	var grants []*model.DeliveryGrant
+	err := r.db.Model("delivery_grants").Ctx(ctx).
+		Where("buyer_sub", sub).
+		Where("state", "active").
+		Where("(expires_at IS NULL OR expires_at > now())").
+		Order("created_at DESC").
+		Limit(offset, limit).
+		Scan(&grants)
+	return grants, err
 }
 
 // ConditionalUpdateOrderStatusTx atomically transitions an order to newStatus only if

@@ -82,6 +82,51 @@ type CaptureCheckoutRes struct {
 	State       string `json:"state"`
 }
 
+type CreatePointsCheckoutReq struct {
+	g.Meta     `path:"/api/v1/checkouts/points" method:"POST" tags:"Commerce Checkout" summary:"Redeem a virtual-goods checkout with points"`
+	BuyerEmail string            `json:"buyerEmail"`
+	Items      []CheckoutItemReq `json:"items" v:"required|length:1,20"`
+}
+
+type CreatePointsCheckoutRes struct {
+	OrderNo     string `json:"orderNo"`
+	Token       string `json:"token,omitempty"`
+	DeliveryRef string `json:"deliveryRef,omitempty"`
+	State       string `json:"state"`
+	Balance     int    `json:"balance"`
+}
+
+type DeliveryView struct {
+	OrderNo      string `json:"orderNo"`
+	BuyerEmail   string `json:"buyerEmail,omitempty"`
+	Title        string `json:"title"`
+	VariantTitle string `json:"variantTitle,omitempty"`
+	SKU          string `json:"sku,omitempty"`
+	DeliveryKind string `json:"deliveryKind"`
+	DeliveryRef  string `json:"deliveryRef"`
+	State        string `json:"state"`
+	CreatedAt    string `json:"createdAt"`
+}
+
+type DeliveryByTokenReq struct {
+	g.Meta `path:"/api/v1/delivery/{token}" method:"GET" tags:"Commerce Delivery" summary:"Get a delivery grant by token"`
+	Token  string `p:"token" v:"required"`
+}
+
+type DeliveryByTokenRes struct {
+	Delivery DeliveryView `json:"delivery"`
+}
+
+type MyPurchasesReq struct {
+	g.Meta `path:"/api/v1/me/purchases" method:"GET" tags:"Commerce Delivery" summary:"List current user's virtual purchases"`
+	Limit  int `p:"limit"`
+	Offset int `p:"offset"`
+}
+
+type MyPurchasesRes struct {
+	Purchases []DeliveryView `json:"purchases"`
+}
+
 // ─── GET /api/v1/admin/commerce/orders ─────────────────────────────────────
 
 type AdminOrderItemView struct {

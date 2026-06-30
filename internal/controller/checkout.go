@@ -30,6 +30,9 @@ func (c *Checkout) CreateCheckout(ctx context.Context, req *v1.CreateCheckoutReq
 	if provider == "" {
 		provider = "alipay"
 	}
+	if provider == model.ProductKindPoints {
+		return nil, commerceerr.InvalidRequest("use /api/v1/checkouts/points for points checkout")
+	}
 	gw, ok := c.registry[provider]
 	if !ok {
 		return nil, commerceerr.InvalidRequest("unsupported payment provider")
@@ -45,14 +48,7 @@ func (c *Checkout) CreateCheckout(ctx context.Context, req *v1.CreateCheckoutReq
 	if p, ok := authjwt.From(ctx); ok && p != nil {
 		desc.BuyerSub = p.Subject
 	}
-	for _, item := range req.Items {
-		desc.Items = append(desc.Items, service.CheckoutItemDesc{
-			SiteKey: item.SiteKey, ExternalID: item.ExternalID, VariantID: item.VariantID,
-			Title: item.Title, VariantTitle: item.VariantTitle, SKU: item.SKU,
-			PriceCents: item.PriceCents, PointsCost: item.PointsCost, Currency: item.Currency,
-			DeliveryKind: item.DeliveryKind, DeliveryRef: item.DeliveryRef, Quantity: item.Quantity,
-		})
-	}
+	desc.Items = checkoutItems(req.Items)
 
 	order, err := c.svc.CreateCheckout(ctx, desc)
 	if err != nil {
@@ -82,6 +78,24 @@ func (c *Checkout) CreateCheckout(ctx context.Context, req *v1.CreateCheckoutReq
 		OrderNo: order.OrderNo, AmountCents: order.AmountCents, Currency: order.Currency,
 		Provider: payment.Provider, Method: payment.Method, PayURL: payment.PayURL,
 		SessionID: payment.SessionID, QRCode: payment.QRCode, ClientToken: payment.ClientToken,
+	}, nil
+}
+
+func (c *Checkout) CreatePointsCheckout(ctx context.Context, req *v1.CreatePointsCheckoutReq) (*v1.CreatePointsCheckoutRes, error) {
+	p, ok := authjwt.From(ctx)
+	if !ok || p == nil {
+		return nil, commerceerr.Forbidden()
+	}
+	res, err := c.svc.RedeemCheckout(ctx, service.CheckoutDesc{
+		BuyerSub: p.Subject, BuyerEmail: strings.TrimSpace(req.BuyerEmail), Provider: model.ProductKindPoints,
+		Items: checkoutItems(req.Items),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &v1.CreatePointsCheckoutRes{
+		OrderNo: res.Order.OrderNo, Token: res.Grant.Token, DeliveryRef: res.Grant.DeliveryRef,
+		State: res.Grant.State, Balance: int(res.Balance),
 	}, nil
 }
 
@@ -123,6 +137,60 @@ func (c *Checkout) CaptureCheckout(ctx context.Context, req *v1.CaptureCheckoutR
 	return &v1.CaptureCheckoutRes{
 		OrderNo: req.OrderNo, Token: grant.Token, DeliveryRef: grant.DeliveryRef, State: grant.State,
 	}, nil
+}
+
+func (c *Checkout) DeliveryByToken(ctx context.Context, req *v1.DeliveryByTokenReq) (*v1.DeliveryByTokenRes, error) {
+	delivery, err := c.svc.DeliveryByToken(ctx, req.Token)
+	if err != nil {
+		return nil, err
+	}
+	return &v1.DeliveryByTokenRes{Delivery: deliveryView(delivery)}, nil
+}
+
+func (c *Checkout) MyPurchases(ctx context.Context, req *v1.MyPurchasesReq) (*v1.MyPurchasesRes, error) {
+	p, ok := authjwt.From(ctx)
+	if !ok || p == nil {
+		return nil, commerceerr.Forbidden()
+	}
+	deliveries, err := c.svc.Purchases(ctx, p.Subject, req.Limit, req.Offset)
+	if err != nil {
+		return nil, err
+	}
+	res := &v1.MyPurchasesRes{Purchases: make([]v1.DeliveryView, 0, len(deliveries))}
+	for _, delivery := range deliveries {
+		res.Purchases = append(res.Purchases, deliveryView(delivery))
+	}
+	return res, nil
+}
+
+func checkoutItems(items []v1.CheckoutItemReq) []service.CheckoutItemDesc {
+	out := make([]service.CheckoutItemDesc, 0, len(items))
+	for _, item := range items {
+		out = append(out, service.CheckoutItemDesc{
+			SiteKey: item.SiteKey, ExternalID: item.ExternalID, VariantID: item.VariantID,
+			Title: item.Title, VariantTitle: item.VariantTitle, SKU: item.SKU,
+			PriceCents: item.PriceCents, PointsCost: item.PointsCost, Currency: item.Currency,
+			DeliveryKind: item.DeliveryKind, DeliveryRef: item.DeliveryRef, Quantity: item.Quantity,
+		})
+	}
+	return out
+}
+
+func deliveryView(delivery *service.DeliveryResult) v1.DeliveryView {
+	view := v1.DeliveryView{
+		OrderNo: delivery.Order.OrderNo, BuyerEmail: delivery.Order.BuyerEmail, DeliveryRef: delivery.Grant.DeliveryRef,
+		State: delivery.Grant.State, CreatedAt: delivery.Grant.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+	}
+	if delivery.Item != nil {
+		view.Title = delivery.Item.TitleSnapshot
+		view.VariantTitle = delivery.Item.VariantTitleSnapshot
+		view.SKU = delivery.Item.SKUSnapshot
+		view.DeliveryKind = delivery.Item.DeliveryKindSnapshot
+	}
+	if view.DeliveryKind == "" {
+		view.DeliveryKind = "asset_file"
+	}
+	return view
 }
 
 func checkoutSubject(items []v1.CheckoutItemReq) string {
