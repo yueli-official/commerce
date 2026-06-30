@@ -116,6 +116,7 @@ func main() {
 		Checkin:   appconfig.LoadCheckin(ctx),
 		Delivery:  appconfig.LoadDelivery(ctx),
 		Mailer:    appconfig.BuildDeliveryMailer(ctx),
+		Asset:     appconfig.BuildAssetDeliveryClient(ctx),
 	})
 	g.Log().Info(ctx, "commerce-service starting")
 	s.Run()

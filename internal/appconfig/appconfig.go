@@ -9,6 +9,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	"platform/gokit/mail"
+	"platform/services/commerce/internal/assetclient"
 	"platform/services/commerce/internal/service"
 )
 
@@ -59,6 +60,38 @@ func BuildDeliveryMailer(ctx context.Context) service.DeliveryMailer {
 		sender = mail.NewDev()
 	}
 	return service.NewDeliveryMailSender(sender)
+}
+
+type assetDeliveryAdapter struct {
+	client *assetclient.Client
+}
+
+func (a assetDeliveryAdapter) CreateDelivery(ctx context.Context, in service.AssetDeliveryInput) (service.AssetDeliveryOutput, error) {
+	out, err := a.client.CreateDelivery(ctx, assetclient.DeliveryInput{
+		AssetID: in.AssetID, SubjectID: in.SubjectID, ExpiresIn: in.ExpiresIn, Reason: in.Reason,
+	})
+	if err != nil {
+		return service.AssetDeliveryOutput{}, err
+	}
+	return service.AssetDeliveryOutput{URL: out.URL, ExpiresAt: out.ExpiresAt}, nil
+}
+
+func BuildAssetDeliveryClient(ctx context.Context) service.AssetDeliveryClient {
+	cfg := assetclient.Config{
+		BaseURL:      g.Cfg().MustGet(ctx, "commerce.assetService.base_url").String(),
+		TokenURL:     g.Cfg().MustGet(ctx, "commerce.assetService.token_url").String(),
+		ClientID:     g.Cfg().MustGet(ctx, "commerce.assetService.client_id").String(),
+		ClientSecret: g.Cfg().MustGet(ctx, "commerce.assetService.client_secret").String(),
+		Scope:        g.Cfg().MustGet(ctx, "commerce.assetService.scope", "asset:sign").String(),
+	}
+	if cfg.BaseURL == "" || cfg.TokenURL == "" || cfg.ClientID == "" || cfg.ClientSecret == "" {
+		return nil
+	}
+	client, err := assetclient.New(cfg)
+	if err != nil {
+		panic(err)
+	}
+	return assetDeliveryAdapter{client: client}
 }
 
 // Alipay holds the Alipay payment provider config.

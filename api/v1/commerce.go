@@ -128,6 +128,7 @@ type DeliveryDownloadReq struct {
 
 type DeliveryDownloadRes struct {
 	DeliveryRef string `json:"deliveryRef"`
+	URL         string `json:"url,omitempty"`
 	ExpiresAt   string `json:"expiresAt"`
 }
 

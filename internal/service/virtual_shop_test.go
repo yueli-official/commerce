@@ -171,6 +171,8 @@ func TestPointsCheckoutSpendsCreditsAndCreatesDelivery(t *testing.T) {
 		PublicBaseURL: "https://shop.example",
 		TTL:           time.Minute,
 	})
+	assetDelivery := &captureAssetDelivery{url: "https://asset.example/grants/download-token"}
+	svc.ConfigureAssetDeliveryClient(assetDelivery)
 	sub := uid("points-buyer")
 	if err := pg.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		return pg.EarnCreditsTx(ctx, tx, sub, 100, model.CreditsSourceGrant, "test")
@@ -236,6 +238,12 @@ func TestPointsCheckoutSpendsCreditsAndCreatesDelivery(t *testing.T) {
 	}
 	if download.DeliveryRef != "asset-points" {
 		t.Fatalf("download delivery ref = %q, want asset-points", download.DeliveryRef)
+	}
+	if download.URL != "https://asset.example/grants/download-token" {
+		t.Fatalf("download url = %q, want asset grant url", download.URL)
+	}
+	if assetDelivery.assetID != "asset-points" || assetDelivery.subjectID != sub {
+		t.Fatalf("asset delivery input = asset %q subject %q, want asset-points/%s", assetDelivery.assetID, assetDelivery.subjectID, sub)
 	}
 	if _, err := svc.ResolveDeliveryDownload(ctx, res.Grant.Token, exp, sig+"x"); err == nil {
 		t.Fatal("expected tampered signature to fail")
@@ -420,4 +428,16 @@ type captureDeliveryMailer struct {
 func (m *captureDeliveryMailer) SendDelivery(ctx context.Context, in service.DeliveryMail) error {
 	m.mails = append(m.mails, in)
 	return nil
+}
+
+type captureAssetDelivery struct {
+	url       string
+	assetID   string
+	subjectID string
+}
+
+func (c *captureAssetDelivery) CreateDelivery(ctx context.Context, in service.AssetDeliveryInput) (service.AssetDeliveryOutput, error) {
+	c.assetID = in.AssetID
+	c.subjectID = in.SubjectID
+	return service.AssetDeliveryOutput{URL: c.url, ExpiresAt: time.Now().UTC().Add(time.Minute)}, nil
 }

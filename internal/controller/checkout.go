@@ -155,6 +155,7 @@ func (c *Checkout) DeliveryDownload(ctx context.Context, req *v1.DeliveryDownloa
 	}
 	return &v1.DeliveryDownloadRes{
 		DeliveryRef: download.DeliveryRef,
+		URL:         download.URL,
 		ExpiresAt:   download.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
 	}, nil
 }

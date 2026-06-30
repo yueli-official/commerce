@@ -84,7 +84,24 @@ type PointsCheckoutResult struct {
 
 type DeliveryDownloadResult struct {
 	DeliveryRef string
+	URL         string
 	ExpiresAt   time.Time
+}
+
+type AssetDeliveryInput struct {
+	AssetID   string
+	SubjectID string
+	ExpiresIn int
+	Reason    string
+}
+
+type AssetDeliveryOutput struct {
+	URL       string
+	ExpiresAt time.Time
+}
+
+type AssetDeliveryClient interface {
+	CreateDelivery(ctx context.Context, in AssetDeliveryInput) (AssetDeliveryOutput, error)
 }
 
 type OrderDetailResult struct {
@@ -133,12 +150,19 @@ func WithDeliveryMailer(mailer DeliveryMailer) Option {
 	}
 }
 
+func WithAssetDeliveryClient(client AssetDeliveryClient) Option {
+	return func(s *Service) {
+		s.ConfigureAssetDeliveryClient(client)
+	}
+}
+
 // Service holds the DAO and implements the commerce domain logic.
 type Service struct {
-	db       *dao.PG
-	checkin  CheckinConfig
-	delivery DeliveryConfig
-	mailer   DeliveryMailer
+	db            *dao.PG
+	checkin       CheckinConfig
+	delivery      DeliveryConfig
+	mailer        DeliveryMailer
+	assetDelivery AssetDeliveryClient
 }
 
 // New constructs a Service.
@@ -161,6 +185,10 @@ func (s *Service) ConfigureDelivery(cfg DeliveryConfig) {
 
 func (s *Service) ConfigureDeliveryMailer(mailer DeliveryMailer) {
 	s.mailer = mailer
+}
+
+func (s *Service) ConfigureAssetDeliveryClient(client AssetDeliveryClient) {
+	s.assetDelivery = client
 }
 
 // CreateOrder lazily upserts the product from desc, then inserts a new order in
@@ -796,7 +824,42 @@ func (s *Service) ResolveDeliveryDownload(ctx context.Context, token, exp, sig s
 	if !hmac.Equal([]byte(expected), []byte(strings.TrimSpace(sig))) {
 		return DeliveryDownloadResult{}, commerceerr.InvalidRequest("invalid delivery signature")
 	}
-	return DeliveryDownloadResult{DeliveryRef: delivery.Grant.DeliveryRef, ExpiresAt: expiresAt}, nil
+	res := DeliveryDownloadResult{DeliveryRef: delivery.Grant.DeliveryRef, ExpiresAt: expiresAt}
+	if s.assetDelivery == nil || strings.TrimSpace(delivery.Grant.DeliveryRef) == "" {
+		return res, nil
+	}
+	assetOut, err := s.assetDelivery.CreateDelivery(ctx, AssetDeliveryInput{
+		AssetID:   delivery.Grant.DeliveryRef,
+		SubjectID: deliverySubject(delivery.Order),
+		ExpiresIn: secondsUntil(expiresAt),
+		Reason:    "commerce:" + delivery.Order.OrderNo,
+	})
+	if err != nil {
+		return DeliveryDownloadResult{}, err
+	}
+	res.URL = assetOut.URL
+	if !assetOut.ExpiresAt.IsZero() && assetOut.ExpiresAt.Before(res.ExpiresAt) {
+		res.ExpiresAt = assetOut.ExpiresAt
+	}
+	return res, nil
+}
+
+func deliverySubject(order *model.Order) string {
+	if order == nil {
+		return ""
+	}
+	if order.BuyerSub != "" {
+		return order.BuyerSub
+	}
+	return order.BuyerEmail
+}
+
+func secondsUntil(t time.Time) int {
+	seconds := int(time.Until(t).Seconds())
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
 }
 
 func (s *Service) attachDownloadURL(res *DeliveryResult) {

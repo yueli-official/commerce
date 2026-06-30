@@ -42,6 +42,15 @@ commerce:
     public_base_url: ""
     ttl_seconds: 900
 
+  assetService:
+    # Optional: when configured, /api/v1/delivery/{token}/download returns a real
+    # asset-service delivery URL instead of only validating the commerce token.
+    base_url: "http://localhost:8082"
+    token_url: "http://localhost:8081/oauth2/token"
+    client_id: ""
+    client_secret: ""
+    scope: "asset:sign"
+
   mailer:
     mode: "dev" # dev | smtp
     smtp:
