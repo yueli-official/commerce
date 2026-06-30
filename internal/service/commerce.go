@@ -111,6 +111,11 @@ type OrderDetailResult struct {
 	Grants []*model.DeliveryGrant
 }
 
+type CheckoutStatusResult struct {
+	Order *model.Order
+	Grant *model.DeliveryGrant
+}
+
 // EntitledResult is the answer to an Entitled query.
 type EntitledResult struct {
 	Entitled bool
@@ -672,6 +677,44 @@ func (s *Service) OrderDetail(ctx context.Context, orderNo string) (*OrderDetail
 		return nil, err
 	}
 	return &OrderDetailResult{Order: order, Items: items, Events: events, Grants: grants}, nil
+}
+
+func (s *Service) CheckoutStatus(ctx context.Context, orderNo, buyerSub, buyerEmail string) (*CheckoutStatusResult, error) {
+	order, err := s.GetOrderByNo(ctx, orderNo)
+	if err != nil {
+		return nil, err
+	}
+	if !canViewCheckout(order, buyerSub, buyerEmail) {
+		return nil, commerceerr.Forbidden()
+	}
+	grants, err := s.db.DeliveryGrantsByOrderID(ctx, order.ID)
+	if err != nil {
+		return nil, err
+	}
+	var grant *model.DeliveryGrant
+	for _, item := range grants {
+		if item.State == "active" {
+			grant = item
+			break
+		}
+		if grant == nil {
+			grant = item
+		}
+	}
+	return &CheckoutStatusResult{Order: order, Grant: grant}, nil
+}
+
+func canViewCheckout(order *model.Order, buyerSub, buyerEmail string) bool {
+	if order == nil {
+		return false
+	}
+	if strings.TrimSpace(order.BuyerSub) != "" && strings.TrimSpace(buyerSub) == strings.TrimSpace(order.BuyerSub) {
+		return true
+	}
+	if normalizeEmail(order.BuyerEmail) != "" && normalizeEmail(buyerEmail) == normalizeEmail(order.BuyerEmail) {
+		return true
+	}
+	return false
 }
 
 func (s *Service) ResendDelivery(ctx context.Context, orderNo string) (*CheckoutGrantResult, error) {

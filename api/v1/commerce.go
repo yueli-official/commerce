@@ -82,6 +82,19 @@ type CaptureCheckoutRes struct {
 	State       string `json:"state"`
 }
 
+type CheckoutStatusReq struct {
+	g.Meta     `path:"/api/v1/checkouts/{orderNo}/status" method:"GET" tags:"Commerce Checkout" summary:"Get checkout payment and delivery status for the buyer"`
+	OrderNo    string `p:"orderNo" v:"required"`
+	BuyerEmail string `p:"buyerEmail"`
+}
+
+type CheckoutStatusRes struct {
+	OrderNo       string `json:"orderNo"`
+	Status        string `json:"status"`
+	DeliveryState string `json:"deliveryState"`
+	DeliveryRef   string `json:"deliveryRef,omitempty"`
+}
+
 type CreatePointsCheckoutReq struct {
 	g.Meta     `path:"/api/v1/checkouts/points" method:"POST" tags:"Commerce Checkout" summary:"Redeem a virtual-goods checkout with points"`
 	BuyerEmail string            `json:"buyerEmail"`

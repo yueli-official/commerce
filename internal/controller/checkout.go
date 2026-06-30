@@ -140,6 +140,26 @@ func (c *Checkout) CaptureCheckout(ctx context.Context, req *v1.CaptureCheckoutR
 	}, nil
 }
 
+func (c *Checkout) CheckoutStatus(ctx context.Context, req *v1.CheckoutStatusReq) (*v1.CheckoutStatusRes, error) {
+	var buyerSub string
+	if p, ok := authjwt.From(ctx); ok && p != nil {
+		buyerSub = p.Subject
+	}
+	status, err := c.svc.CheckoutStatus(ctx, req.OrderNo, buyerSub, req.BuyerEmail)
+	if err != nil {
+		return nil, err
+	}
+	res := &v1.CheckoutStatusRes{
+		OrderNo:       status.Order.OrderNo,
+		Status:        status.Order.Status,
+		DeliveryState: status.Order.DeliveryState,
+	}
+	if status.Grant != nil {
+		res.DeliveryRef = status.Grant.DeliveryRef
+	}
+	return res, nil
+}
+
 func (c *Checkout) DeliveryByToken(ctx context.Context, req *v1.DeliveryByTokenReq) (*v1.DeliveryByTokenRes, error) {
 	delivery, err := c.svc.DeliveryByToken(ctx, req.Token)
 	if err != nil {
