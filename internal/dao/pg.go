@@ -12,7 +12,6 @@ import (
 	"platform/services/commerce/internal/model"
 )
 
-
 // PG wraps the GoFrame gdb handle.
 type PG struct{ db gdb.DB }
 
@@ -65,14 +64,14 @@ func (r *PG) InsertOrder(ctx context.Context, o *model.Order) error {
 		o.ID = uuid.NewString()
 	}
 	data := g.Map{
-		"id":          o.ID,
-		"order_no":    o.OrderNo,
-		"sub":         o.Sub,
-		"product_id":  o.ProductID,
+		"id":           o.ID,
+		"order_no":     o.OrderNo,
+		"sub":          o.Sub,
+		"product_id":   o.ProductID,
 		"amount_cents": o.AmountCents,
-		"currency":    o.Currency,
-		"status":      o.Status,
-		"gateway":     o.Gateway,
+		"currency":     o.Currency,
+		"status":       o.Status,
+		"gateway":      o.Gateway,
 	}
 	if o.ProviderTxID != "" {
 		data["provider_tx_id"] = o.ProviderTxID
@@ -102,6 +101,82 @@ func (r *PG) UpdateOrderStatus(ctx context.Context, orderID, status string) erro
 		Data(g.Map{"status": status, "updated_at": gtime.Now()}).
 		Update()
 	return err
+}
+
+// UpsertBuyer resolves a logged-in or guest buyer for checkout orders.
+func (r *PG) UpsertBuyer(ctx context.Context, b *model.Buyer) error {
+	if b.ID == "" {
+		b.ID = uuid.NewString()
+	}
+	if b.Kind == model.BuyerKindUser {
+		sql := `
+INSERT INTO commerce_buyers (id, kind, buyer_sub, buyer_email, email_normalized)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT (buyer_sub) WHERE buyer_sub IS NOT NULL DO UPDATE
+  SET buyer_email = EXCLUDED.buyer_email,
+      email_normalized = EXCLUDED.email_normalized,
+      updated_at = now()
+RETURNING id`
+		val, err := r.db.GetValue(ctx, sql, b.ID, b.Kind, b.BuyerSub, b.BuyerEmail, b.EmailNormalized)
+		if err != nil {
+			return err
+		}
+		b.ID = val.String()
+		return nil
+	}
+	_, err := r.db.Exec(ctx, `
+INSERT INTO commerce_buyers (id, kind, buyer_email, email_normalized)
+VALUES (?, ?, ?, ?)`, b.ID, b.Kind, b.BuyerEmail, b.EmailNormalized)
+	return err
+}
+
+// InsertCheckoutOrder inserts a checkout order and its item snapshots.
+func (r *PG) InsertCheckoutOrder(ctx context.Context, o *model.Order, items []*model.OrderItem) error {
+	if o.ID == "" {
+		o.ID = uuid.NewString()
+	}
+	return r.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		_, err := tx.Ctx(ctx).Exec(`
+INSERT INTO orders (
+    id, order_no, sub, product_id, amount_cents, currency, status, gateway,
+    buyer_id, buyer_sub, buyer_email, payment_provider, payment_session_id,
+    return_url, cancel_url, delivery_state
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			o.ID, o.OrderNo, nullableString(o.Sub), o.ProductID, o.AmountCents, o.Currency, o.Status, o.Gateway,
+			nullableString(o.BuyerID), nullableString(o.BuyerSub), nullableString(o.BuyerEmail), o.PaymentProvider, nullableString(o.PaymentSessionID),
+			o.ReturnURL, o.CancelURL, o.DeliveryState,
+		)
+		if err != nil {
+			return err
+		}
+		for _, item := range items {
+			if item.ID == "" {
+				item.ID = uuid.NewString()
+			}
+			item.OrderID = o.ID
+			if _, err := tx.Ctx(ctx).Exec(`
+INSERT INTO order_items (
+    id, order_id, site_key, external_id, product_id, variant_id, title_snapshot,
+    variant_title_snapshot, sku_snapshot, quantity, unit_price_cents, unit_points_cost,
+    currency, delivery_kind_snapshot, delivery_ref_snapshot
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				item.ID, item.OrderID, item.SiteKey, item.ExternalID, nullableString(item.ProductID), item.VariantID, item.TitleSnapshot,
+				item.VariantTitleSnapshot, item.SKUSnapshot, item.Quantity, item.UnitPriceCents, item.UnitPointsCost,
+				item.Currency, item.DeliveryKindSnapshot, item.DeliveryRefSnapshot,
+			); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (r *PG) OrderItems(ctx context.Context, orderID string) ([]*model.OrderItem, error) {
+	var items []*model.OrderItem
+	if err := r.db.Model("order_items").Ctx(ctx).Where("order_id", orderID).Order("created_at ASC").Scan(&items); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 // InsertEntitlement inserts an entitlement row. Duplicate (sub, product_id) is silently ignored
@@ -166,6 +241,45 @@ func (r *PG) UpdateOrderStatusTx(ctx context.Context, tx gdb.TX, orderID, status
 	return err
 }
 
+func (r *PG) FulfillCheckoutTx(ctx context.Context, tx gdb.TX, orderID, providerTxID string, paidAt *gtime.Time) error {
+	data := g.Map{
+		"status":         model.OrderStatusFulfilled,
+		"delivery_state": model.DeliveryStateGranted,
+		"fulfilled_at":   paidAt,
+		"updated_at":     gtime.Now(),
+		"provider_tx_id": providerTxID,
+		"paid_at":        paidAt,
+	}
+	_, err := tx.Ctx(ctx).Model("orders").Where("id", orderID).Where("status", model.OrderStatusPaying).Data(data).Update()
+	return err
+}
+
+func (r *PG) InsertPaymentEventTx(ctx context.Context, tx gdb.TX, event *model.PaymentEvent) error {
+	if event.ID == "" {
+		event.ID = uuid.NewString()
+	}
+	_, err := tx.Ctx(ctx).Exec(`
+INSERT INTO payment_events (id, order_id, provider, event_type, provider_event_id, raw_hash, amount_cents, success, message)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		event.ID, nullableString(event.OrderID), event.Provider, event.EventType, event.ProviderEventID, event.RawHash,
+		event.AmountCents, event.Success, event.Message,
+	)
+	return err
+}
+
+func (r *PG) InsertDeliveryGrantTx(ctx context.Context, tx gdb.TX, grant *model.DeliveryGrant) error {
+	if grant.ID == "" {
+		grant.ID = uuid.NewString()
+	}
+	_, err := tx.Ctx(ctx).Exec(`
+INSERT INTO delivery_grants (id, order_id, order_item_id, buyer_sub, buyer_email, token_hash, delivery_ref, state, expires_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		grant.ID, grant.OrderID, nullableString(grant.OrderItemID), nullableString(grant.BuyerSub), nullableString(grant.BuyerEmail),
+		grant.TokenHash, grant.DeliveryRef, grant.State, grant.ExpiresAt,
+	)
+	return err
+}
+
 // ConditionalUpdateOrderStatusTx atomically transitions an order to newStatus only if
 // its current status matches fromStatus. Returns (true, nil) when the row was updated,
 // (false, nil) when no row matched (race lost or state already changed), and
@@ -214,6 +328,13 @@ ON CONFLICT (sub, product_id) DO NOTHING`
 	}
 	_, err := tx.Ctx(ctx).Exec(sql, e.ID, e.Sub, e.ProductID, e.Source, orderID, expiresAt)
 	return err
+}
+
+func nullableString(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // ─── M2: check-in + credits ─────────────────────────────────────────────────

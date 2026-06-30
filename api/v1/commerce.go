@@ -129,4 +129,7 @@ type DevSettleReq struct {
 }
 
 // DevSettleRes is the response body for dev settle (empty data).
-type DevSettleRes struct{}
+type DevSettleRes struct {
+	Token       string `json:"token,omitempty"`
+	DeliveryRef string `json:"deliveryRef,omitempty"`
+}

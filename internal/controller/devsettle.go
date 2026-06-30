@@ -30,6 +30,13 @@ func (c *DevSettle) Settle(ctx context.Context, req *v1.DevSettleReq) (*v1.DevSe
 	if err != nil {
 		return nil, err
 	}
+	if o.BuyerID != "" || o.BuyerEmail != "" {
+		grant, err := c.svc.SettleCheckout(ctx, req.OrderNo, "dev", "DEV-SETTLE-"+req.OrderNo, o.AmountCents)
+		if err != nil {
+			return nil, err
+		}
+		return &v1.DevSettleRes{Token: grant.Token, DeliveryRef: grant.DeliveryRef}, nil
+	}
 	if err := c.svc.MarkPaid(ctx, req.OrderNo, "DEV-SETTLE-"+req.OrderNo, o.AmountCents); err != nil {
 		return nil, err
 	}

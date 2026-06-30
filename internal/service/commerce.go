@@ -4,6 +4,11 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"strings"
 	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
@@ -25,6 +30,36 @@ type OrderDesc struct {
 	Currency   string
 	PriceCents int
 	PointsCost int
+}
+
+type CheckoutDesc struct {
+	BuyerSub   string
+	BuyerEmail string
+	Provider   string
+	ReturnURL  string
+	CancelURL  string
+	Items      []CheckoutItemDesc
+}
+
+type CheckoutItemDesc struct {
+	SiteKey      string
+	ExternalID   string
+	VariantID    string
+	Title        string
+	VariantTitle string
+	SKU          string
+	PriceCents   int
+	PointsCost   int
+	Currency     string
+	DeliveryKind string
+	DeliveryRef  string
+	Quantity     int
+}
+
+type CheckoutGrantResult struct {
+	Token       string
+	State       string
+	DeliveryRef string
 }
 
 // EntitledResult is the answer to an Entitled query.
@@ -89,6 +124,148 @@ func (s *Service) CreateOrder(ctx context.Context, sub string, desc OrderDesc) (
 	return o, p, nil
 }
 
+func (s *Service) CreateCheckout(ctx context.Context, desc CheckoutDesc) (*model.Order, error) {
+	buyer, err := s.resolveBuyer(ctx, desc)
+	if err != nil {
+		return nil, err
+	}
+	if len(desc.Items) == 0 {
+		return nil, commerceerr.NotifyInvalid("checkout requires at least one item")
+	}
+	if desc.Provider == "" {
+		desc.Provider = "alipay"
+	}
+
+	var (
+		total          int
+		items          []*model.OrderItem
+		firstProductID string
+		currency       = "CNY"
+	)
+	for _, in := range desc.Items {
+		if in.Quantity <= 0 {
+			in.Quantity = 1
+		}
+		if in.Currency != "" {
+			currency = in.Currency
+		}
+		if in.PriceCents < 0 || in.PointsCost < 0 {
+			return nil, commerceerr.NotifyInvalid("checkout item price cannot be negative")
+		}
+		lineTotal := in.PriceCents * in.Quantity
+		total += lineTotal
+		p := &model.Product{
+			SiteKey: in.SiteKey, ExternalID: in.ExternalID, Kind: model.ProductKindPaid,
+			Title: in.Title, PriceCents: in.PriceCents, PointsCost: in.PointsCost, Currency: currency, Status: model.ProductStatusActive,
+		}
+		if err := s.db.UpsertProduct(ctx, p); err != nil {
+			return nil, err
+		}
+		if firstProductID == "" {
+			firstProductID = p.ID
+		}
+		items = append(items, &model.OrderItem{
+			SiteKey: in.SiteKey, ExternalID: in.ExternalID, ProductID: p.ID, VariantID: in.VariantID,
+			TitleSnapshot: in.Title, VariantTitleSnapshot: in.VariantTitle, SKUSnapshot: in.SKU,
+			Quantity: in.Quantity, UnitPriceCents: in.PriceCents, UnitPointsCost: in.PointsCost,
+			Currency: currency, DeliveryKindSnapshot: defaultString(in.DeliveryKind, "asset_file"), DeliveryRefSnapshot: in.DeliveryRef,
+		})
+	}
+	if total <= 0 {
+		return nil, commerceerr.NotifyInvalid("checkout amount must be positive")
+	}
+	o := &model.Order{
+		OrderNo: NewOrderNo(), Sub: buyer.BuyerSub, ProductID: firstProductID, AmountCents: total, Currency: currency,
+		Status: model.OrderStatusPaying, Gateway: desc.Provider, BuyerID: buyer.ID, BuyerSub: buyer.BuyerSub, BuyerEmail: buyer.BuyerEmail,
+		PaymentProvider: desc.Provider, ReturnURL: desc.ReturnURL, CancelURL: desc.CancelURL, DeliveryState: model.DeliveryStatePending,
+	}
+	if err := s.db.InsertCheckoutOrder(ctx, o, items); err != nil {
+		return nil, err
+	}
+	return o, nil
+}
+
+func (s *Service) SettleCheckout(ctx context.Context, orderNo, provider, providerTxID string, amountCents int) (*CheckoutGrantResult, error) {
+	o, err := s.db.GetOrderByNo(ctx, orderNo)
+	if err != nil {
+		return nil, err
+	}
+	if o == nil {
+		return nil, commerceerr.OrderNotFound(orderNo)
+	}
+	if o.Status == model.OrderStatusFulfilled {
+		return &CheckoutGrantResult{State: model.DeliveryStateGranted}, nil
+	}
+	if o.Status != model.OrderStatusPaying {
+		return nil, commerceerr.OrderInvalidState(o.Status, model.OrderStatusFulfilled)
+	}
+	if amountCents != o.AmountCents {
+		return nil, commerceerr.NotifyInvalid("amount mismatch")
+	}
+	items, err := s.db.OrderItems(ctx, o.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, commerceerr.NotifyInvalid("checkout has no items")
+	}
+
+	rawToken, tokenHash, err := newDeliveryToken()
+	if err != nil {
+		return nil, err
+	}
+	now := gtime.New(time.Now())
+	first := items[0]
+	err = s.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		if err := s.db.FulfillCheckoutTx(ctx, tx, o.ID, providerTxID, now); err != nil {
+			return err
+		}
+		if err := s.db.InsertPaymentEventTx(ctx, tx, &model.PaymentEvent{
+			OrderID: o.ID, Provider: defaultString(provider, o.PaymentProvider), EventType: "settle",
+			ProviderEventID: providerTxID, AmountCents: amountCents, Success: true, Message: "checkout settled",
+		}); err != nil {
+			return err
+		}
+		if o.BuyerSub != "" {
+			for _, item := range items {
+				if err := s.db.InsertEntitlementTx(ctx, tx, &model.Entitlement{
+					Sub: itemBuyerSub(o), ProductID: item.ProductID, Source: model.EntitlementSourceOrder, OrderID: &o.ID,
+				}); err != nil {
+					return err
+				}
+			}
+		}
+		return s.db.InsertDeliveryGrantTx(ctx, tx, &model.DeliveryGrant{
+			OrderID: o.ID, OrderItemID: first.ID, BuyerSub: o.BuyerSub, BuyerEmail: o.BuyerEmail,
+			TokenHash: tokenHash, DeliveryRef: first.DeliveryRefSnapshot, State: "active",
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &CheckoutGrantResult{Token: rawToken, State: model.DeliveryStateGranted, DeliveryRef: first.DeliveryRefSnapshot}, nil
+}
+
+func (s *Service) resolveBuyer(ctx context.Context, desc CheckoutDesc) (*model.Buyer, error) {
+	email := normalizeEmail(desc.BuyerEmail)
+	if strings.TrimSpace(desc.BuyerSub) == "" && email == "" {
+		return nil, commerceerr.NotifyInvalid("checkout requires buyer email or user")
+	}
+	b := &model.Buyer{
+		BuyerSub: strings.TrimSpace(desc.BuyerSub), BuyerEmail: strings.TrimSpace(desc.BuyerEmail), EmailNormalized: email,
+	}
+	if b.BuyerSub != "" {
+		b.Kind = model.BuyerKindUser
+	} else {
+		b.Kind = model.BuyerKindGuest
+		b.BuyerEmail = email
+	}
+	if err := s.db.UpsertBuyer(ctx, b); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
 // SetPaying transitions an order from "pending" to "paying".
 // Called after the payment gateway creates a payment session.
 func (s *Service) SetPaying(ctx context.Context, orderNo string) error {
@@ -103,6 +280,34 @@ func (s *Service) SetPaying(ctx context.Context, orderNo string) error {
 		return commerceerr.OrderInvalidState(o.Status, model.OrderStatusPaying)
 	}
 	return s.db.UpdateOrderStatus(ctx, o.ID, model.OrderStatusPaying)
+}
+
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
+func defaultString(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func itemBuyerSub(o *model.Order) string {
+	if o.BuyerSub != "" {
+		return o.BuyerSub
+	}
+	return o.Sub
+}
+
+func newDeliveryToken() (string, string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", "", err
+	}
+	raw := base64.RawURLEncoding.EncodeToString(b[:])
+	sum := sha256.Sum256([]byte(raw))
+	return raw, hex.EncodeToString(sum[:]), nil
 }
 
 // MarkPaid transitions an order from "paying" to "paid" and grants the entitlement.

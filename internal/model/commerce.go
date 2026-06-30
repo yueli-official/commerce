@@ -9,6 +9,11 @@ const (
 	OrderStatusPaying    = "paying"
 	OrderStatusPaid      = "paid"
 	OrderStatusCancelled = "cancelled"
+	OrderStatusDraft     = "draft"
+	OrderStatusFulfilled = "fulfilled"
+	OrderStatusRefunding = "refunding"
+	OrderStatusRefunded  = "refunded"
+	OrderStatusFailed    = "failed"
 )
 
 // Product status constants.
@@ -35,6 +40,18 @@ const (
 	CreditsSourceCheckin = "checkin"
 	CreditsSourceRedeem  = "redeem"
 	CreditsSourceGrant   = "grant"
+)
+
+const (
+	BuyerKindUser  = "user"
+	BuyerKindGuest = "guest"
+)
+
+const (
+	DeliveryStatePending = "pending"
+	DeliveryStateGranted = "granted"
+	DeliveryStateRevoked = "revoked"
+	DeliveryStateFailed  = "failed"
 )
 
 // Product is a purchasable item tied to a site. A `paid` product is priced in
@@ -75,18 +92,28 @@ type LedgerEntry struct {
 
 // Order is a single purchase transaction.
 type Order struct {
-	ID           string     `json:"id"           orm:"id"`
-	OrderNo      string     `json:"orderNo"      orm:"order_no"`
-	Sub          string     `json:"sub"          orm:"sub"`
-	ProductID    string     `json:"productId"    orm:"product_id"`
-	AmountCents  int        `json:"amountCents"  orm:"amount_cents"`
-	Currency     string     `json:"currency"     orm:"currency"`
-	Status       string     `json:"status"       orm:"status"`
-	Gateway      string     `json:"gateway"      orm:"gateway"`
-	ProviderTxID string     `json:"providerTxId" orm:"provider_tx_id"`
-	PaidAt       *time.Time `json:"paidAt"       orm:"paid_at"`
-	CreatedAt    time.Time  `json:"createdAt"    orm:"created_at"`
-	UpdatedAt    time.Time  `json:"updatedAt"    orm:"updated_at"`
+	ID               string     `json:"id"                orm:"id"`
+	OrderNo          string     `json:"orderNo"           orm:"order_no"`
+	Sub              string     `json:"sub"               orm:"sub"`
+	ProductID        string     `json:"productId"         orm:"product_id"`
+	AmountCents      int        `json:"amountCents"       orm:"amount_cents"`
+	Currency         string     `json:"currency"          orm:"currency"`
+	Status           string     `json:"status"            orm:"status"`
+	Gateway          string     `json:"gateway"           orm:"gateway"`
+	ProviderTxID     string     `json:"providerTxId"      orm:"provider_tx_id"`
+	PaidAt           *time.Time `json:"paidAt"            orm:"paid_at"`
+	BuyerID          string     `json:"buyerId"           orm:"buyer_id"`
+	BuyerSub         string     `json:"buyerSub"          orm:"buyer_sub"`
+	BuyerEmail       string     `json:"buyerEmail"        orm:"buyer_email"`
+	PaymentProvider  string     `json:"paymentProvider"   orm:"payment_provider"`
+	PaymentSessionID string     `json:"paymentSessionId"  orm:"payment_session_id"`
+	PaymentExpiresAt *time.Time `json:"paymentExpiresAt"  orm:"payment_expires_at"`
+	ReturnURL        string     `json:"returnUrl"         orm:"return_url"`
+	CancelURL        string     `json:"cancelUrl"         orm:"cancel_url"`
+	FulfilledAt      *time.Time `json:"fulfilledAt"       orm:"fulfilled_at"`
+	DeliveryState    string     `json:"deliveryState"     orm:"delivery_state"`
+	CreatedAt        time.Time  `json:"createdAt"         orm:"created_at"`
+	UpdatedAt        time.Time  `json:"updatedAt"         orm:"updated_at"`
 }
 
 // Entitlement records that a subscriber may access a product.
@@ -98,4 +125,60 @@ type Entitlement struct {
 	OrderID   *string    `json:"orderId"   orm:"order_id"`
 	GrantedAt time.Time  `json:"grantedAt" orm:"granted_at"`
 	ExpiresAt *time.Time `json:"expiresAt" orm:"expires_at"`
+}
+
+type Buyer struct {
+	ID              string    `json:"id"              orm:"id"`
+	Kind            string    `json:"kind"            orm:"kind"`
+	BuyerSub        string    `json:"buyerSub"        orm:"buyer_sub"`
+	BuyerEmail      string    `json:"buyerEmail"      orm:"buyer_email"`
+	EmailNormalized string    `json:"emailNormalized" orm:"email_normalized"`
+	CreatedAt       time.Time `json:"createdAt"       orm:"created_at"`
+	UpdatedAt       time.Time `json:"updatedAt"       orm:"updated_at"`
+}
+
+type OrderItem struct {
+	ID                   string    `json:"id"                   orm:"id"`
+	OrderID              string    `json:"orderId"              orm:"order_id"`
+	SiteKey              string    `json:"siteKey"              orm:"site_key"`
+	ExternalID           string    `json:"externalId"           orm:"external_id"`
+	ProductID            string    `json:"productId"            orm:"product_id"`
+	VariantID            string    `json:"variantId"            orm:"variant_id"`
+	TitleSnapshot        string    `json:"titleSnapshot"        orm:"title_snapshot"`
+	VariantTitleSnapshot string    `json:"variantTitleSnapshot" orm:"variant_title_snapshot"`
+	SKUSnapshot          string    `json:"skuSnapshot"          orm:"sku_snapshot"`
+	Quantity             int       `json:"quantity"             orm:"quantity"`
+	UnitPriceCents       int       `json:"unitPriceCents"       orm:"unit_price_cents"`
+	UnitPointsCost       int       `json:"unitPointsCost"       orm:"unit_points_cost"`
+	Currency             string    `json:"currency"             orm:"currency"`
+	DeliveryKindSnapshot string    `json:"deliveryKindSnapshot" orm:"delivery_kind_snapshot"`
+	DeliveryRefSnapshot  string    `json:"deliveryRefSnapshot"  orm:"delivery_ref_snapshot"`
+	CreatedAt            time.Time `json:"createdAt"            orm:"created_at"`
+}
+
+type PaymentEvent struct {
+	ID              string    `json:"id"              orm:"id"`
+	OrderID         string    `json:"orderId"         orm:"order_id"`
+	Provider        string    `json:"provider"        orm:"provider"`
+	EventType       string    `json:"eventType"       orm:"event_type"`
+	ProviderEventID string    `json:"providerEventId" orm:"provider_event_id"`
+	RawHash         string    `json:"rawHash"         orm:"raw_hash"`
+	AmountCents     int       `json:"amountCents"     orm:"amount_cents"`
+	Success         bool      `json:"success"         orm:"success"`
+	Message         string    `json:"message"         orm:"message"`
+	CreatedAt       time.Time `json:"createdAt"       orm:"created_at"`
+}
+
+type DeliveryGrant struct {
+	ID          string     `json:"id"          orm:"id"`
+	OrderID     string     `json:"orderId"     orm:"order_id"`
+	OrderItemID string     `json:"orderItemId" orm:"order_item_id"`
+	BuyerSub    string     `json:"buyerSub"    orm:"buyer_sub"`
+	BuyerEmail  string     `json:"buyerEmail"  orm:"buyer_email"`
+	TokenHash   string     `json:"tokenHash"   orm:"token_hash"`
+	DeliveryRef string     `json:"deliveryRef" orm:"delivery_ref"`
+	State       string     `json:"state"       orm:"state"`
+	CreatedAt   time.Time  `json:"createdAt"   orm:"created_at"`
+	ExpiresAt   *time.Time `json:"expiresAt"   orm:"expires_at"`
+	RevokedAt   *time.Time `json:"revokedAt"   orm:"revoked_at"`
 }

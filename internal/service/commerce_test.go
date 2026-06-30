@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gogf/gf/v2/database/gdb"
 	_ "github.com/gogf/gf/contrib/drivers/pgsql/v2"
+	"github.com/gogf/gf/v2/database/gdb"
 
 	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/dao"
@@ -59,11 +59,15 @@ func resetSchema(t *testing.T, db gdb.DB) {
 	t.Helper()
 	ctx := context.Background()
 	for _, stmt := range []string{
+		"DROP TABLE IF EXISTS delivery_grants",
+		"DROP TABLE IF EXISTS payment_events",
+		"DROP TABLE IF EXISTS order_items",
 		"DROP TABLE IF EXISTS checkin_records",
 		"DROP TABLE IF EXISTS credits_ledger",
 		"DROP TABLE IF EXISTS credits_balances",
 		"DROP TABLE IF EXISTS entitlements",
 		"DROP TABLE IF EXISTS orders",
+		"DROP TABLE IF EXISTS commerce_buyers",
 		"DROP TABLE IF EXISTS products",
 	} {
 		if _, err := db.Exec(ctx, stmt); err != nil {
@@ -73,6 +77,7 @@ func resetSchema(t *testing.T, db gdb.DB) {
 	for _, f := range []string{
 		"../../manifest/sql/migrations/0001_init.up.sql",
 		"../../manifest/sql/migrations/0002_credits_checkin.up.sql",
+		"../../manifest/sql/migrations/0003_virtual_shop_checkout.up.sql",
 	} {
 		up, err := os.ReadFile(f)
 		if err != nil {
