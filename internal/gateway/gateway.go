@@ -50,8 +50,9 @@ type CreatePaymentOut struct {
 }
 
 type CapturePaymentIn struct {
-	OrderNo   string
-	SessionID string
+	OrderNo     string
+	SessionID   string
+	AmountCents int
 }
 
 type CapturePaymentOut struct {

@@ -14,6 +14,10 @@ func NewWeChatStubProvider() PaymentGateway {
 	return &stubProvider{provider: "wechat", method: CapabilityNativeQR}
 }
 
+func NewAlipayStubProvider() PaymentGateway {
+	return &stubProvider{provider: "alipay", method: CapabilityRedirect}
+}
+
 func NewPayPalStubProvider() PaymentGateway {
 	return &stubProvider{provider: "paypal", method: CapabilityBrowserButton}
 }
@@ -25,6 +29,8 @@ func (p *stubProvider) CreatePayment(_ context.Context, in CreateIn) (*CreatePay
 		SessionID: p.provider + "-" + in.OrderNo,
 	}
 	switch p.method {
+	case CapabilityRedirect:
+		out.PayURL = fmt.Sprintf("%s://pay/%s", p.provider, in.OrderNo)
 	case CapabilityNativeQR:
 		out.QRCode = fmt.Sprintf("%s://pay/%s", p.provider, in.OrderNo)
 	case CapabilityBrowserButton:
@@ -41,6 +47,7 @@ func (p *stubProvider) CapturePayment(_ context.Context, in CapturePaymentIn) (*
 		Success:      true,
 		OrderNo:      in.OrderNo,
 		ProviderTxID: "CAPTURE-" + in.SessionID,
+		AmountCents:  in.AmountCents,
 	}, nil
 }
 

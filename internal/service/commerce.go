@@ -246,6 +246,20 @@ func (s *Service) SettleCheckout(ctx context.Context, orderNo, provider, provide
 	return &CheckoutGrantResult{Token: rawToken, State: model.DeliveryStateGranted, DeliveryRef: first.DeliveryRefSnapshot}, nil
 }
 
+func (s *Service) SetCheckoutPaymentSession(ctx context.Context, orderNo, sessionID string) error {
+	o, err := s.db.GetOrderByNo(ctx, orderNo)
+	if err != nil {
+		return err
+	}
+	if o == nil {
+		return commerceerr.OrderNotFound(orderNo)
+	}
+	if o.Status != model.OrderStatusPaying {
+		return commerceerr.OrderInvalidState(o.Status, model.OrderStatusPaying)
+	}
+	return s.db.UpdatePaymentSession(ctx, o.ID, sessionID)
+}
+
 func (s *Service) resolveBuyer(ctx context.Context, desc CheckoutDesc) (*model.Buyer, error) {
 	email := normalizeEmail(desc.BuyerEmail)
 	if strings.TrimSpace(desc.BuyerSub) == "" && email == "" {
@@ -397,6 +411,14 @@ func (s *Service) GetOrderByNo(ctx context.Context, orderNo string) (*model.Orde
 		return nil, commerceerr.OrderNotFound(orderNo)
 	}
 	return o, nil
+}
+
+func (s *Service) ListOrders(ctx context.Context, status, q string, limit, offset int) ([]*model.Order, error) {
+	return s.db.ListOrders(ctx, strings.TrimSpace(status), strings.TrimSpace(q), limit, offset)
+}
+
+func (s *Service) OrderItems(ctx context.Context, orderID string) ([]*model.OrderItem, error) {
+	return s.db.OrderItems(ctx, orderID)
 }
 
 // Entitled reports whether sub is entitled to the product identified by (siteKey, externalID).

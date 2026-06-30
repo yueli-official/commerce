@@ -94,6 +94,28 @@ func (r *PG) GetOrderByNo(ctx context.Context, orderNo string) (*model.Order, er
 	return o, nil
 }
 
+func (r *PG) ListOrders(ctx context.Context, status, q string, limit, offset int) ([]*model.Order, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	m := r.db.Model("orders").Ctx(ctx)
+	if status != "" {
+		m = m.Where("status", status)
+	}
+	if q != "" {
+		like := "%" + q + "%"
+		m = m.Where("(order_no LIKE ? OR buyer_email LIKE ?)", like, like)
+	}
+	var orders []*model.Order
+	if err := m.Order("created_at DESC").Limit(offset, limit).Scan(&orders); err != nil {
+		return nil, err
+	}
+	return orders, nil
+}
+
 // UpdateOrderStatus sets the status (and optionally paid_at) on an order.
 func (r *PG) UpdateOrderStatus(ctx context.Context, orderID, status string) error {
 	_, err := r.db.Model("orders").Ctx(ctx).
@@ -177,6 +199,14 @@ func (r *PG) OrderItems(ctx context.Context, orderID string) ([]*model.OrderItem
 		return nil, err
 	}
 	return items, nil
+}
+
+func (r *PG) UpdatePaymentSession(ctx context.Context, orderID, sessionID string) error {
+	_, err := r.db.Exec(ctx, `
+UPDATE orders
+SET payment_session_id = ?, updated_at = now()
+WHERE id = ?`, nullableString(sessionID), orderID)
+	return err
 }
 
 // InsertEntitlement inserts an entitlement row. Duplicate (sub, product_id) is silently ignored

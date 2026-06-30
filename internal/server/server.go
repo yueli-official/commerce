@@ -51,17 +51,28 @@ func Configure(s *ghttp.Server, d Deps) {
 		}
 	}
 
+	// ── Public/optional-auth: virtual-goods checkout ─────────────────────────
+	// Guest buyers identify by email; logged-in buyers get their subject from an
+	// optional Bearer token injected by the app BFF.
+	checkoutCtrl := controller.NewCheckout(svc, d.Registry, d.NotifyURL)
+	s.Group("/", func(grp *ghttp.RouterGroup) {
+		grp.Middleware(ghttpx.Middleware, authjwt.OptionalMiddleware(d.Verifier))
+		grp.Bind(checkoutCtrl)
+	})
+
 	// ── Protected: JWT-required routes ──────────────────────────────────────
 	orderCtrl := controller.NewOrder(svc, d.Registry, d.NotifyURL, d.ReturnURL)
 	accessCtrl := controller.NewAccess(svc)
 	checkinCtrl := controller.NewCheckin(svc)
 	creditsCtrl := controller.NewCredits(svc)
+	adminOrderCtrl := controller.NewAdminOrder(svc)
 	s.Group("/", func(grp *ghttp.RouterGroup) {
 		grp.Middleware(ghttpx.Middleware, authjwt.Middleware(d.Verifier))
 		grp.Bind(orderCtrl)
 		grp.Bind(accessCtrl)
 		grp.Bind(checkinCtrl)
 		grp.Bind(creditsCtrl)
+		grp.Bind(adminOrderCtrl)
 	})
 
 	// ── Dev-only: settle seam (conditionally registered) ────────────────────

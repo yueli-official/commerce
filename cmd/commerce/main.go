@@ -49,6 +49,13 @@ func main() {
 	}
 
 	devSettle := g.Cfg().MustGet(ctx, "commerce.devSettle").Bool()
+	if devSettle {
+		if _, ok := reg["alipay"]; !ok {
+			reg["alipay"] = gateway.NewAlipayStubProvider()
+		}
+		reg["wechat"] = gateway.NewWeChatStubProvider()
+		reg["paypal"] = gateway.NewPayPalStubProvider()
+	}
 
 	// Prod-safety guard: devSettle backdoor must never reach a real Alipay endpoint.
 	if devSettle {

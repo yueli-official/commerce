@@ -30,6 +30,99 @@ type CreateOrderRes struct {
 	Balance  *int   `json:"balance,omitempty"`
 }
 
+// ─── POST /api/v1/checkouts ────────────────────────────────────────────────
+
+type CheckoutItemReq struct {
+	SiteKey      string `json:"siteKey" v:"required|length:1,128"`
+	ExternalID   string `json:"externalId" v:"required|length:1,128"`
+	VariantID    string `json:"variantId" v:"required|length:1,128"`
+	Title        string `json:"title" v:"required|length:1,200"`
+	VariantTitle string `json:"variantTitle"`
+	SKU          string `json:"sku"`
+	PriceCents   int    `json:"priceCents"`
+	PointsCost   int    `json:"pointsCost"`
+	Currency     string `json:"currency"`
+	DeliveryKind string `json:"deliveryKind"`
+	DeliveryRef  string `json:"deliveryRef"`
+	Quantity     int    `json:"quantity"`
+}
+
+type CreateCheckoutReq struct {
+	g.Meta     `path:"/api/v1/checkouts" method:"POST" tags:"Commerce Checkout" summary:"Create a virtual-goods checkout for a guest email or logged-in buyer"`
+	BuyerEmail string            `json:"buyerEmail"`
+	Provider   string            `json:"provider"`
+	ReturnURL  string            `json:"returnUrl"`
+	CancelURL  string            `json:"cancelUrl"`
+	Items      []CheckoutItemReq `json:"items" v:"required|length:1,20"`
+}
+
+type CreateCheckoutRes struct {
+	OrderNo     string `json:"orderNo"`
+	AmountCents int    `json:"amountCents"`
+	Currency    string `json:"currency"`
+	Provider    string `json:"provider"`
+	Method      string `json:"method"`
+	PayURL      string `json:"payUrl,omitempty"`
+	SessionID   string `json:"sessionId,omitempty"`
+	QRCode      string `json:"qrCode,omitempty"`
+	ClientToken string `json:"clientToken,omitempty"`
+}
+
+type CaptureCheckoutReq struct {
+	g.Meta    `path:"/api/v1/checkouts/{orderNo}/capture" method:"POST" tags:"Commerce Checkout" summary:"Capture a browser-button checkout session"`
+	OrderNo   string `p:"orderNo" v:"required"`
+	Provider  string `json:"provider" v:"required|length:1,32"`
+	SessionID string `json:"sessionId" v:"required|length:1,256"`
+}
+
+type CaptureCheckoutRes struct {
+	OrderNo     string `json:"orderNo"`
+	Token       string `json:"token,omitempty"`
+	DeliveryRef string `json:"deliveryRef,omitempty"`
+	State       string `json:"state"`
+}
+
+// ─── GET /api/v1/admin/commerce/orders ─────────────────────────────────────
+
+type AdminOrderItemView struct {
+	ID           string `json:"id"`
+	Title        string `json:"title"`
+	VariantTitle string `json:"variantTitle"`
+	SKU          string `json:"sku"`
+	Quantity     int    `json:"quantity"`
+	PriceCents   int    `json:"priceCents"`
+	Currency     string `json:"currency"`
+	DeliveryKind string `json:"deliveryKind"`
+	DeliveryRef  string `json:"deliveryRef"`
+}
+
+type AdminOrderView struct {
+	ID              string               `json:"id"`
+	OrderNo         string               `json:"orderNo"`
+	Sub             string               `json:"sub,omitempty"`
+	BuyerSub        string               `json:"buyerSub,omitempty"`
+	BuyerEmail      string               `json:"buyerEmail,omitempty"`
+	AmountCents     int                  `json:"amountCents"`
+	Currency        string               `json:"currency"`
+	Status          string               `json:"status"`
+	PaymentProvider string               `json:"paymentProvider"`
+	DeliveryState   string               `json:"deliveryState"`
+	CreatedAt       string               `json:"createdAt"`
+	Items           []AdminOrderItemView `json:"items,omitempty"`
+}
+
+type AdminListOrdersReq struct {
+	g.Meta `path:"/api/v1/admin/commerce/orders" method:"GET" tags:"Admin Commerce" summary:"List commerce orders"`
+	Q      string `p:"q"`
+	Status string `p:"status"`
+	Limit  int    `p:"limit"`
+	Offset int    `p:"offset"`
+}
+
+type AdminListOrdersRes struct {
+	Orders []AdminOrderView `json:"orders"`
+}
+
 // ─── GET /api/v1/access ─────────────────────────────────────────────────────
 
 // EntitledReq is the query-param request for Entitled.
