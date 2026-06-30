@@ -114,6 +114,7 @@ func main() {
 		ReturnURL: returnURL,
 		DevSettle: devSettle,
 		Checkin:   appconfig.LoadCheckin(ctx),
+		Delivery:  appconfig.LoadDelivery(ctx),
 	})
 	g.Log().Info(ctx, "commerce-service starting")
 	s.Run()

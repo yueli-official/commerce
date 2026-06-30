@@ -148,6 +148,17 @@ func (c *Checkout) DeliveryByToken(ctx context.Context, req *v1.DeliveryByTokenR
 	return &v1.DeliveryByTokenRes{Delivery: deliveryView(delivery)}, nil
 }
 
+func (c *Checkout) DeliveryDownload(ctx context.Context, req *v1.DeliveryDownloadReq) (*v1.DeliveryDownloadRes, error) {
+	download, err := c.svc.ResolveDeliveryDownload(ctx, req.Token, req.Exp, req.Sig)
+	if err != nil {
+		return nil, err
+	}
+	return &v1.DeliveryDownloadRes{
+		DeliveryRef: download.DeliveryRef,
+		ExpiresAt:   download.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
+	}, nil
+}
+
 func (c *Checkout) MyPurchases(ctx context.Context, req *v1.MyPurchasesReq) (*v1.MyPurchasesRes, error) {
 	p, ok := authjwt.From(ctx)
 	if !ok || p == nil {
@@ -181,6 +192,12 @@ func deliveryView(delivery *service.DeliveryResult) v1.DeliveryView {
 	view := v1.DeliveryView{
 		OrderNo: delivery.Order.OrderNo, BuyerEmail: delivery.Order.BuyerEmail, DeliveryRef: delivery.Grant.DeliveryRef,
 		State: delivery.Grant.State, CreatedAt: delivery.Grant.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+	}
+	if delivery.DownloadURL != "" {
+		view.DownloadURL = delivery.DownloadURL
+	}
+	if delivery.DownloadExpiresAt != nil {
+		view.DownloadExpiresAt = delivery.DownloadExpiresAt.Format("2006-01-02T15:04:05Z07:00")
 	}
 	if delivery.Item != nil {
 		view.Title = delivery.Item.TitleSnapshot

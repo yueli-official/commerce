@@ -23,11 +23,12 @@ type Deps struct {
 	ReturnURL string                // URL the buyer is sent to after paying
 	DevSettle bool                  // when true, register the /dev/orders/{orderNo}/settle endpoint
 	Checkin   service.CheckinConfig // daily check-in reward curve
+	Delivery  service.DeliveryConfig
 }
 
 // Configure mounts the commerce-service routes onto s.
 func Configure(s *ghttp.Server, d Deps) {
-	svc := service.New(d.DB, d.Checkin)
+	svc := service.New(d.DB, d.Checkin, service.WithDeliveryConfig(d.Delivery))
 
 	// ── Public: liveness ────────────────────────────────────────────────────
 	s.Group("/", func(grp *ghttp.RouterGroup) {

@@ -4,10 +4,14 @@ package service
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -63,15 +67,23 @@ type CheckoutGrantResult struct {
 }
 
 type DeliveryResult struct {
-	Grant *model.DeliveryGrant
-	Order *model.Order
-	Item  *model.OrderItem
+	Grant             *model.DeliveryGrant
+	Order             *model.Order
+	Item              *model.OrderItem
+	Token             string
+	DownloadURL       string
+	DownloadExpiresAt *time.Time
 }
 
 type PointsCheckoutResult struct {
 	Order   *model.Order
 	Grant   *CheckoutGrantResult
 	Balance int64
+}
+
+type DeliveryDownloadResult struct {
+	DeliveryRef string
+	ExpiresAt   time.Time
 }
 
 // EntitledResult is the answer to an Entitled query.
@@ -93,15 +105,43 @@ type CheckinConfig struct {
 	Cap  int
 }
 
+type DeliveryConfig struct {
+	SigningSecret string
+	PublicBaseURL string
+	TTL           time.Duration
+}
+
+type Option func(*Service)
+
+func WithDeliveryConfig(cfg DeliveryConfig) Option {
+	return func(s *Service) {
+		s.ConfigureDelivery(cfg)
+	}
+}
+
 // Service holds the DAO and implements the commerce domain logic.
 type Service struct {
-	db      *dao.PG
-	checkin CheckinConfig
+	db       *dao.PG
+	checkin  CheckinConfig
+	delivery DeliveryConfig
 }
 
 // New constructs a Service.
-func New(db *dao.PG, checkin CheckinConfig) *Service {
-	return &Service{db: db, checkin: checkin}
+func New(db *dao.PG, checkin CheckinConfig, opts ...Option) *Service {
+	s := &Service{db: db, checkin: checkin, delivery: DeliveryConfig{TTL: 15 * time.Minute}}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+func (s *Service) ConfigureDelivery(cfg DeliveryConfig) {
+	if cfg.TTL <= 0 {
+		cfg.TTL = 15 * time.Minute
+	}
+	cfg.SigningSecret = strings.TrimSpace(cfg.SigningSecret)
+	cfg.PublicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/")
+	s.delivery = cfg
 }
 
 // CreateOrder lazily upserts the product from desc, then inserts a new order in
@@ -556,14 +596,21 @@ func (s *Service) OrderItems(ctx context.Context, orderID string) ([]*model.Orde
 }
 
 func (s *Service) DeliveryByToken(ctx context.Context, token string) (*DeliveryResult, error) {
-	grant, err := s.db.DeliveryGrantByTokenHash(ctx, hashDeliveryToken(strings.TrimSpace(token)))
+	token = strings.TrimSpace(token)
+	grant, err := s.db.DeliveryGrantByTokenHash(ctx, hashDeliveryToken(token))
 	if err != nil {
 		return nil, err
 	}
 	if grant == nil {
 		return nil, commerceerr.OrderNotFound("delivery")
 	}
-	return s.deliveryResult(ctx, grant)
+	res, err := s.deliveryResult(ctx, grant)
+	if err != nil {
+		return nil, err
+	}
+	res.Token = token
+	s.attachDownloadURL(res)
+	return res, nil
 }
 
 func (s *Service) Purchases(ctx context.Context, sub string, limit, offset int) ([]*DeliveryResult, error) {
@@ -598,6 +645,53 @@ func (s *Service) deliveryResult(ctx context.Context, grant *model.DeliveryGrant
 		}
 	}
 	return &DeliveryResult{Grant: grant, Order: order, Item: item}, nil
+}
+
+func (s *Service) ResolveDeliveryDownload(ctx context.Context, token, exp, sig string) (DeliveryDownloadResult, error) {
+	if strings.TrimSpace(s.delivery.SigningSecret) == "" {
+		return DeliveryDownloadResult{}, commerceerr.InvalidRequest("delivery signing is not configured")
+	}
+	expiresUnix, err := strconv.ParseInt(strings.TrimSpace(exp), 10, 64)
+	if err != nil {
+		return DeliveryDownloadResult{}, commerceerr.InvalidRequest("invalid delivery expiry")
+	}
+	expiresAt := time.Unix(expiresUnix, 0).UTC()
+	if !time.Now().UTC().Before(expiresAt) {
+		return DeliveryDownloadResult{}, commerceerr.InvalidRequest("delivery link expired")
+	}
+	delivery, err := s.DeliveryByToken(ctx, token)
+	if err != nil {
+		return DeliveryDownloadResult{}, err
+	}
+	expected := s.deliverySignature(token, exp, delivery.Grant.DeliveryRef)
+	if !hmac.Equal([]byte(expected), []byte(strings.TrimSpace(sig))) {
+		return DeliveryDownloadResult{}, commerceerr.InvalidRequest("invalid delivery signature")
+	}
+	return DeliveryDownloadResult{DeliveryRef: delivery.Grant.DeliveryRef, ExpiresAt: expiresAt}, nil
+}
+
+func (s *Service) attachDownloadURL(res *DeliveryResult) {
+	if res == nil || res.Grant == nil || strings.TrimSpace(res.Token) == "" || strings.TrimSpace(s.delivery.SigningSecret) == "" {
+		return
+	}
+	if res.Item != nil && res.Item.DeliveryKindSnapshot != "" && res.Item.DeliveryKindSnapshot != "asset_file" {
+		return
+	}
+	expiresAt := time.Now().UTC().Add(s.delivery.TTL)
+	exp := strconv.FormatInt(expiresAt.Unix(), 10)
+	sig := s.deliverySignature(res.Token, exp, res.Grant.DeliveryRef)
+	q := url.Values{}
+	q.Set("exp", exp)
+	q.Set("sig", sig)
+	path := "/api/v1/delivery/" + url.PathEscape(res.Token) + "/download"
+	res.DownloadURL = s.delivery.PublicBaseURL + path + "?" + q.Encode()
+	res.DownloadExpiresAt = &expiresAt
+}
+
+func (s *Service) deliverySignature(token, exp, deliveryRef string) string {
+	mac := hmac.New(sha256.New, []byte(s.delivery.SigningSecret))
+	_, _ = fmt.Fprintf(mac, "%s\n%s\n%s", strings.TrimSpace(token), strings.TrimSpace(exp), strings.TrimSpace(deliveryRef))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // Entitled reports whether sub is entitled to the product identified by (siteKey, externalID).

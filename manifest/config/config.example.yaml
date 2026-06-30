@@ -35,6 +35,13 @@ commerce:
     step: 2
     cap: 30
 
+  delivery:
+    # Required to expose downloadUrl on delivery token pages.
+    signing_secret: ""
+    # Optional public origin, e.g. https://shop.example.com. Empty returns relative URLs.
+    public_base_url: ""
+    ttl_seconds: 900
+
   alipay:
     app_id: ""
     private_key: ""

@@ -2,7 +2,10 @@ package service_test
 
 import (
 	"context"
+	"net/url"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
 
@@ -143,6 +146,11 @@ func TestUserCheckoutGrantsEntitlementOnSettle(t *testing.T) {
 
 func TestPointsCheckoutSpendsCreditsAndCreatesDelivery(t *testing.T) {
 	svc, pg, ctx := newSvc(t)
+	svc.ConfigureDelivery(service.DeliveryConfig{
+		SigningSecret: "test-secret",
+		PublicBaseURL: "https://shop.example",
+		TTL:           time.Minute,
+	})
 	sub := uid("points-buyer")
 	if err := pg.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		return pg.EarnCreditsTx(ctx, tx, sub, 100, model.CreditsSourceGrant, "test")
@@ -186,6 +194,31 @@ func TestPointsCheckoutSpendsCreditsAndCreatesDelivery(t *testing.T) {
 	}
 	if delivery.Item.TitleSnapshot != "Points Template" {
 		t.Fatalf("title snapshot = %q, want Points Template", delivery.Item.TitleSnapshot)
+	}
+	if delivery.DownloadURL == "" {
+		t.Fatal("expected signed download URL")
+	}
+	u, err := url.Parse(delivery.DownloadURL)
+	if err != nil {
+		t.Fatalf("parse download url: %v", err)
+	}
+	if u.Scheme != "https" || u.Host != "shop.example" {
+		t.Fatalf("download url host = %s://%s", u.Scheme, u.Host)
+	}
+	if !strings.Contains(u.Path, "/api/v1/delivery/") || !strings.HasSuffix(u.Path, "/download") {
+		t.Fatalf("download url path = %q", u.Path)
+	}
+	exp := u.Query().Get("exp")
+	sig := u.Query().Get("sig")
+	download, err := svc.ResolveDeliveryDownload(ctx, res.Grant.Token, exp, sig)
+	if err != nil {
+		t.Fatalf("ResolveDeliveryDownload: %v", err)
+	}
+	if download.DeliveryRef != "asset-points" {
+		t.Fatalf("download delivery ref = %q, want asset-points", download.DeliveryRef)
+	}
+	if _, err := svc.ResolveDeliveryDownload(ctx, res.Grant.Token, exp, sig+"x"); err == nil {
+		t.Fatal("expected tampered signature to fail")
 	}
 	p, err := pg.GetProductByExternal(ctx, "shop", externalID)
 	if err != nil {

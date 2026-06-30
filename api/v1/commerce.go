@@ -97,15 +97,17 @@ type CreatePointsCheckoutRes struct {
 }
 
 type DeliveryView struct {
-	OrderNo      string `json:"orderNo"`
-	BuyerEmail   string `json:"buyerEmail,omitempty"`
-	Title        string `json:"title"`
-	VariantTitle string `json:"variantTitle,omitempty"`
-	SKU          string `json:"sku,omitempty"`
-	DeliveryKind string `json:"deliveryKind"`
-	DeliveryRef  string `json:"deliveryRef"`
-	State        string `json:"state"`
-	CreatedAt    string `json:"createdAt"`
+	OrderNo           string `json:"orderNo"`
+	BuyerEmail        string `json:"buyerEmail,omitempty"`
+	Title             string `json:"title"`
+	VariantTitle      string `json:"variantTitle,omitempty"`
+	SKU               string `json:"sku,omitempty"`
+	DeliveryKind      string `json:"deliveryKind"`
+	DeliveryRef       string `json:"deliveryRef"`
+	DownloadURL       string `json:"downloadUrl,omitempty"`
+	DownloadExpiresAt string `json:"downloadExpiresAt,omitempty"`
+	State             string `json:"state"`
+	CreatedAt         string `json:"createdAt"`
 }
 
 type DeliveryByTokenReq struct {
@@ -115,6 +117,18 @@ type DeliveryByTokenReq struct {
 
 type DeliveryByTokenRes struct {
 	Delivery DeliveryView `json:"delivery"`
+}
+
+type DeliveryDownloadReq struct {
+	g.Meta `path:"/api/v1/delivery/{token}/download" method:"GET" tags:"Commerce Delivery" summary:"Validate a signed delivery download handoff"`
+	Token  string `p:"token" v:"required"`
+	Exp    string `p:"exp" v:"required"`
+	Sig    string `p:"sig" v:"required"`
+}
+
+type DeliveryDownloadRes struct {
+	DeliveryRef string `json:"deliveryRef"`
+	ExpiresAt   string `json:"expiresAt"`
 }
 
 type MyPurchasesReq struct {

@@ -4,6 +4,7 @@ package appconfig
 
 import (
 	"context"
+	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 
@@ -33,6 +34,16 @@ func LoadCheckin(ctx context.Context) service.CheckinConfig {
 		Base: g.Cfg().MustGet(ctx, "commerce.checkin.base", 10).Int(),
 		Step: g.Cfg().MustGet(ctx, "commerce.checkin.step", 2).Int(),
 		Cap:  g.Cfg().MustGet(ctx, "commerce.checkin.cap", 30).Int(),
+	}
+}
+
+// LoadDelivery reads commerce.delivery.* for signed virtual-goods handoff URLs.
+func LoadDelivery(ctx context.Context) service.DeliveryConfig {
+	ttl := g.Cfg().MustGet(ctx, "commerce.delivery.ttl_seconds", 900).Int()
+	return service.DeliveryConfig{
+		SigningSecret: g.Cfg().MustGet(ctx, "commerce.delivery.signing_secret").String(),
+		PublicBaseURL: g.Cfg().MustGet(ctx, "commerce.delivery.public_base_url").String(),
+		TTL:           time.Duration(ttl) * time.Second,
 	}
 }
 
