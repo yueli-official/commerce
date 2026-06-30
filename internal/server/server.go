@@ -37,16 +37,22 @@ func Configure(s *ghttp.Server, d Deps) {
 		})
 	})
 
-	// ── Public: Alipay async notify (no JWT; raw plaintext response) ────────
-	// The notify handler writes "success"/"fail" directly — ghttpx envelope
-	// is present for trace injection but will leave the response untouched
-	// because the handler writes raw bytes before Middleware.Next() returns.
+	// ── Public: payment async notify (no JWT; provider-native response) ─────
+	// Notify handlers write raw provider responses directly, bypassing the
+	// standard JSON envelope.
 	if d.Registry != nil {
 		if gw, ok := d.Registry["alipay"]; ok {
-			notifyCtrl := controller.NewNotify(gw, svc)
+			notifyCtrl := controller.NewNotify("alipay", gw, svc)
 			s.Group("/", func(grp *ghttp.RouterGroup) {
 				grp.Middleware(ghttpx.Middleware)
 				grp.POST("/api/v1/payments/alipay/notify", notifyCtrl.Handle)
+			})
+		}
+		if gw, ok := d.Registry["wechat"]; ok {
+			notifyCtrl := controller.NewNotify("wechat", gw, svc)
+			s.Group("/", func(grp *ghttp.RouterGroup) {
+				grp.Middleware(ghttpx.Middleware)
+				grp.POST("/api/v1/payments/wechat/notify", notifyCtrl.Handle)
 			})
 		}
 	}

@@ -60,13 +60,31 @@ func main() {
 		}
 		reg["paypal"] = paypalGW
 	}
+	wechatCfg := appconfig.LoadWeChat(ctx)
+	if wechatCfg.MerchantID != "" && wechatCfg.MerchantCertSN != "" && wechatCfg.MerchantAPIv3Key != "" &&
+		wechatCfg.PrivateKey != "" && wechatCfg.AppID != "" {
+		wechatGW, err := gateway.NewWeChatProvider(gateway.WeChatConfig{
+			MerchantID:       wechatCfg.MerchantID,
+			MerchantCertSN:   wechatCfg.MerchantCertSN,
+			MerchantAPIv3Key: wechatCfg.MerchantAPIv3Key,
+			PrivateKey:       wechatCfg.PrivateKey,
+			AppID:            wechatCfg.AppID,
+			NotifyURL:        wechatCfg.NotifyURL,
+		})
+		if err != nil {
+			panic(err)
+		}
+		reg["wechat"] = wechatGW
+	}
 
 	devSettle := g.Cfg().MustGet(ctx, "commerce.devSettle").Bool()
 	if devSettle {
 		if _, ok := reg["alipay"]; !ok {
 			reg["alipay"] = gateway.NewAlipayStubProvider()
 		}
-		reg["wechat"] = gateway.NewWeChatStubProvider()
+		if _, ok := reg["wechat"]; !ok {
+			reg["wechat"] = gateway.NewWeChatStubProvider()
+		}
 		if _, ok := reg["paypal"]; !ok {
 			reg["paypal"] = gateway.NewPayPalStubProvider()
 		}

@@ -75,3 +75,25 @@ func LoadPayPal(ctx context.Context) PayPal {
 		BaseURL:      g.Cfg().MustGet(ctx, "commerce.paypal.base_url").String(),
 	}
 }
+
+// WeChat holds the WeChat Pay APIv3 provider config.
+type WeChat struct {
+	MerchantID       string
+	MerchantCertSN   string
+	MerchantAPIv3Key string
+	PrivateKey       string
+	AppID            string
+	NotifyURL        string
+}
+
+// LoadWeChat reads commerce.wechat.* from the GoFrame config.
+func LoadWeChat(ctx context.Context) WeChat {
+	return WeChat{
+		MerchantID:       g.Cfg().MustGet(ctx, "commerce.wechat.merchant_id").String(),
+		MerchantCertSN:   g.Cfg().MustGet(ctx, "commerce.wechat.merchant_cert_sn").String(),
+		MerchantAPIv3Key: g.Cfg().MustGet(ctx, "commerce.wechat.merchant_api_v3_key").String(),
+		PrivateKey:       g.Cfg().MustGet(ctx, "commerce.wechat.private_key").String(),
+		AppID:            g.Cfg().MustGet(ctx, "commerce.wechat.app_id").String(),
+		NotifyURL:        g.Cfg().MustGet(ctx, "commerce.wechat.notify_url").String(),
+	}
+}

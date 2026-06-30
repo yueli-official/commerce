@@ -3,11 +3,13 @@ module platform/services/commerce
 go 1.23.0
 
 require (
+	github.com/go-jose/go-jose/v3 v3.0.3
 	github.com/gogf/gf/contrib/drivers/pgsql/v2 v2.10.2
 	github.com/gogf/gf/v2 v2.10.2
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.10.9
 	github.com/smartwalle/alipay/v3 v3.2.25
+	github.com/wechatpay-apiv3/wechatpay-go v0.2.21
 	platform/gokit v0.0.0
 )
 
@@ -17,7 +19,6 @@ require (
 	github.com/emirpasic/gods/v2 v2.0.0-alpha // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
-	github.com/go-jose/go-jose/v3 v3.0.3 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect

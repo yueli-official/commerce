@@ -49,3 +49,11 @@ commerce:
     sandbox: true
     # Optional override for tests/proxies. Empty uses PayPal sandbox/live API base.
     base_url: ""
+
+  wechat:
+    merchant_id: ""
+    merchant_cert_sn: ""
+    merchant_api_v3_key: ""
+    private_key: ""
+    app_id: ""
+    notify_url: ""

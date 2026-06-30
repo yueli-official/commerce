@@ -13,13 +13,14 @@ import (
 // The response MUST be the plaintext string "success" or "fail" — Alipay
 // requires exactly this; do NOT wrap in the gokit envelope.
 type Notify struct {
-	gw  gateway.PaymentGateway
-	svc *service.Service
+	provider string
+	gw       gateway.PaymentGateway
+	svc      *service.Service
 }
 
 // NewNotify constructs a Notify controller.
-func NewNotify(gw gateway.PaymentGateway, svc *service.Service) *Notify {
-	return &Notify{gw: gw, svc: svc}
+func NewNotify(provider string, gw gateway.PaymentGateway, svc *service.Service) *Notify {
+	return &Notify{provider: provider, gw: gw, svc: svc}
 }
 
 // Handle is a raw ghttp.HandlerFunc — not struct-based — so we bypass the
@@ -27,7 +28,7 @@ func NewNotify(gw gateway.PaymentGateway, svc *service.Service) *Notify {
 func (c *Notify) Handle(r *ghttp.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		r.Response.Write("fail")
+		c.writeFail(r)
 		return
 	}
 
@@ -40,14 +41,31 @@ func (c *Notify) Handle(r *ghttp.Request) {
 
 	out, err := c.gw.VerifyNotify(r.Context(), body, headers)
 	if err != nil || out == nil || !out.Success {
-		r.Response.Write("fail")
+		c.writeFail(r)
 		return
 	}
 
 	if err := c.svc.MarkPaid(r.Context(), out.OrderNo, out.ProviderTxID, out.AmountCents); err != nil {
-		r.Response.Write("fail")
+		c.writeFail(r)
 		return
 	}
 
+	c.writeSuccess(r)
+}
+
+func (c *Notify) writeSuccess(r *ghttp.Request) {
+	if c.provider == "wechat" {
+		r.Response.WriteJson(map[string]string{"code": "SUCCESS", "message": "成功"})
+		return
+	}
 	r.Response.Write("success")
+}
+
+func (c *Notify) writeFail(r *ghttp.Request) {
+	if c.provider == "wechat" {
+		r.Response.Status = 500
+		r.Response.WriteJson(map[string]string{"code": "FAIL", "message": "失败"})
+		return
+	}
+	r.Response.Write("fail")
 }
