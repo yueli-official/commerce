@@ -1009,6 +1009,26 @@ func (s *Service) Purchases(ctx context.Context, sub string, limit, offset int) 
 	return out, nil
 }
 
+func (s *Service) PurchaseByOrder(ctx context.Context, buyerSub, orderNo string) (*DeliveryResult, error) {
+	order, err := s.GetOrderByNo(ctx, orderNo)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(order.BuyerSub) == "" || strings.TrimSpace(order.BuyerSub) != strings.TrimSpace(buyerSub) {
+		return nil, commerceerr.Forbidden()
+	}
+	grants, err := s.db.DeliveryGrantsByOrderID(ctx, order.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, grant := range grants {
+		if grant.State == "active" && (grant.ExpiresAt == nil || time.Now().UTC().Before(*grant.ExpiresAt)) {
+			return s.deliveryResult(ctx, grant)
+		}
+	}
+	return nil, commerceerr.OrderNotFound("delivery")
+}
+
 func (s *Service) deliveryResult(ctx context.Context, grant *model.DeliveryGrant) (*DeliveryResult, error) {
 	order, err := s.db.GetOrderByID(ctx, grant.OrderID)
 	if err != nil {
@@ -1046,6 +1066,28 @@ func (s *Service) ResolveDeliveryDownload(ctx context.Context, token, exp, sig s
 	expected := s.deliverySignature(token, exp, delivery.Grant.DeliveryRef)
 	if !hmac.Equal([]byte(expected), []byte(strings.TrimSpace(sig))) {
 		return DeliveryDownloadResult{}, commerceerr.InvalidRequest("invalid delivery signature")
+	}
+	return s.resolveAssetDelivery(ctx, delivery, expiresAt)
+}
+
+func (s *Service) ResolvePurchaseDownload(ctx context.Context, buyerSub, orderNo string) (DeliveryDownloadResult, error) {
+	delivery, err := s.PurchaseByOrder(ctx, buyerSub, orderNo)
+	if err != nil {
+		return DeliveryDownloadResult{}, err
+	}
+	return s.resolveAssetDelivery(ctx, delivery, time.Now().UTC().Add(s.delivery.TTL))
+}
+
+func (s *Service) resolveAssetDelivery(ctx context.Context, delivery *DeliveryResult, expiresAt time.Time) (DeliveryDownloadResult, error) {
+	if delivery == nil || delivery.Grant == nil {
+		return DeliveryDownloadResult{}, commerceerr.OrderNotFound("delivery")
+	}
+	kind := "asset_file"
+	if delivery.Item != nil && strings.TrimSpace(delivery.Item.DeliveryKindSnapshot) != "" {
+		kind = strings.TrimSpace(delivery.Item.DeliveryKindSnapshot)
+	}
+	if kind != "asset_file" {
+		return DeliveryDownloadResult{}, commerceerr.InvalidRequest("delivery is not an asset file")
 	}
 	res := DeliveryDownloadResult{DeliveryRef: delivery.Grant.DeliveryRef, ExpiresAt: expiresAt}
 	if s.assetDelivery == nil || strings.TrimSpace(delivery.Grant.DeliveryRef) == "" {

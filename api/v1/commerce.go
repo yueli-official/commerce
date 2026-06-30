@@ -122,17 +122,26 @@ type CreatePointsCheckoutRes struct {
 }
 
 type DeliveryView struct {
-	OrderNo           string `json:"orderNo"`
-	BuyerEmail        string `json:"buyerEmail,omitempty"`
-	Title             string `json:"title"`
-	VariantTitle      string `json:"variantTitle,omitempty"`
-	SKU               string `json:"sku,omitempty"`
-	DeliveryKind      string `json:"deliveryKind"`
-	DeliveryRef       string `json:"deliveryRef"`
-	DownloadURL       string `json:"downloadUrl,omitempty"`
-	DownloadExpiresAt string `json:"downloadExpiresAt,omitempty"`
-	State             string `json:"state"`
-	CreatedAt         string `json:"createdAt"`
+	OrderNo           string               `json:"orderNo"`
+	BuyerEmail        string               `json:"buyerEmail,omitempty"`
+	Title             string               `json:"title"`
+	VariantTitle      string               `json:"variantTitle,omitempty"`
+	SKU               string               `json:"sku,omitempty"`
+	DeliveryKind      string               `json:"deliveryKind"`
+	DeliveryRef       string               `json:"deliveryRef"`
+	Netdisk           *NetdiskDeliveryView `json:"netdisk,omitempty"`
+	DownloadURL       string               `json:"downloadUrl,omitempty"`
+	DownloadExpiresAt string               `json:"downloadExpiresAt,omitempty"`
+	State             string               `json:"state"`
+	CreatedAt         string               `json:"createdAt"`
+}
+
+type NetdiskDeliveryView struct {
+	Provider    string `json:"provider,omitempty"`
+	URL         string `json:"url,omitempty"`
+	AccessCode  string `json:"accessCode,omitempty"`
+	ExtractCode string `json:"extractCode,omitempty"`
+	Note        string `json:"note,omitempty"`
 }
 
 type DeliveryByTokenReq struct {
@@ -165,6 +174,20 @@ type MyPurchasesReq struct {
 
 type MyPurchasesRes struct {
 	Purchases []DeliveryView `json:"purchases"`
+}
+
+type MyPurchaseByOrderReq struct {
+	g.Meta  `path:"/api/v1/me/purchases/{orderNo}" method:"GET" tags:"Commerce Delivery" summary:"Get current user's purchase delivery by order number"`
+	OrderNo string `p:"orderNo" v:"required"`
+}
+
+type MyPurchaseByOrderRes struct {
+	Delivery DeliveryView `json:"delivery"`
+}
+
+type MyPurchaseDownloadReq struct {
+	g.Meta  `path:"/api/v1/me/purchases/{orderNo}/download" method:"GET" tags:"Commerce Delivery" summary:"Create a download URL for current user's purchase"`
+	OrderNo string `p:"orderNo" v:"required"`
 }
 
 // ─── GET /api/v1/payments/methods ─────────────────────────────────────────

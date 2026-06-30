@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -212,6 +213,34 @@ func (c *Checkout) MyPurchases(ctx context.Context, req *v1.MyPurchasesReq) (*v1
 	return res, nil
 }
 
+func (c *Checkout) MyPurchaseByOrder(ctx context.Context, req *v1.MyPurchaseByOrderReq) (*v1.MyPurchaseByOrderRes, error) {
+	p, ok := authjwt.From(ctx)
+	if !ok || p == nil {
+		return nil, commerceerr.Forbidden()
+	}
+	delivery, err := c.svc.PurchaseByOrder(ctx, p.Subject, req.OrderNo)
+	if err != nil {
+		return nil, err
+	}
+	return &v1.MyPurchaseByOrderRes{Delivery: deliveryView(delivery)}, nil
+}
+
+func (c *Checkout) MyPurchaseDownload(ctx context.Context, req *v1.MyPurchaseDownloadReq) (*v1.DeliveryDownloadRes, error) {
+	p, ok := authjwt.From(ctx)
+	if !ok || p == nil {
+		return nil, commerceerr.Forbidden()
+	}
+	download, err := c.svc.ResolvePurchaseDownload(ctx, p.Subject, req.OrderNo)
+	if err != nil {
+		return nil, err
+	}
+	return &v1.DeliveryDownloadRes{
+		DeliveryRef: download.DeliveryRef,
+		URL:         download.URL,
+		ExpiresAt:   download.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
+	}, nil
+}
+
 func checkoutItems(items []v1.CheckoutItemReq) []service.CheckoutItemDesc {
 	out := make([]service.CheckoutItemDesc, 0, len(items))
 	for _, item := range items {
@@ -245,7 +274,21 @@ func deliveryView(delivery *service.DeliveryResult) v1.DeliveryView {
 	if view.DeliveryKind == "" {
 		view.DeliveryKind = "asset_file"
 	}
+	if view.DeliveryKind == "netdisk" {
+		view.Netdisk = parseNetdiskDelivery(delivery.Grant.DeliveryRef)
+		view.DeliveryRef = ""
+	}
 	return view
+}
+
+func parseNetdiskDelivery(raw string) *v1.NetdiskDeliveryView {
+	var payload struct {
+		Netdisk *v1.NetdiskDeliveryView `json:"netdisk"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil || payload.Netdisk == nil {
+		return nil
+	}
+	return payload.Netdisk
 }
 
 func checkoutSubject(items []v1.CheckoutItemReq) string {
