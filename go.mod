@@ -47,6 +47,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace platform/gokit => ../../packages/gokit
+replace platform/gokit => ../../packages/go/gokit
 
-replace platform/paykit => ../../packages/paykit
+replace platform/paykit => ../../packages/go/paykit
