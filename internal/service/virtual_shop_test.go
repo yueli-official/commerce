@@ -538,6 +538,51 @@ func TestAdminOrderSupportActions(t *testing.T) {
 	}
 }
 
+func TestRecordPaymentFailureAppearsInOrderDetail(t *testing.T) {
+	svc, _, ctx := newSvc(t)
+	order, err := svc.CreateCheckout(ctx, service.CheckoutDesc{
+		BuyerEmail: "audit@example.com",
+		Provider:   "paypal",
+		Items: []service.CheckoutItemDesc{{
+			SiteKey:      "shop",
+			ExternalID:   uid("variant-audit"),
+			VariantID:    uid("variant-id-audit"),
+			Title:        "Audit Pack",
+			VariantTitle: "Standard",
+			SKU:          "AUDIT-STD",
+			PriceCents:   4200,
+			Currency:     "USD",
+			DeliveryKind: "asset_file",
+			DeliveryRef:  "asset-audit",
+			Quantity:     1,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckout: %v", err)
+	}
+
+	if err := svc.RecordPaymentFailure(ctx, order.OrderNo, "paypal", "capture", "PAYPAL-ORDER-1", 4200, "paypal capture amount mismatch"); err != nil {
+		t.Fatalf("RecordPaymentFailure: %v", err)
+	}
+	detail, err := svc.OrderDetail(ctx, order.OrderNo)
+	if err != nil {
+		t.Fatalf("OrderDetail: %v", err)
+	}
+	if len(detail.Events) != 1 {
+		t.Fatalf("events len = %d, want 1", len(detail.Events))
+	}
+	event := detail.Events[0]
+	if event.Provider != "paypal" || event.EventType != "capture" || event.Success {
+		t.Fatalf("unexpected event: %+v", event)
+	}
+	if event.ProviderEventID != "PAYPAL-ORDER-1" || event.AmountCents != 4200 {
+		t.Fatalf("unexpected event payload: %+v", event)
+	}
+	if event.Message != "paypal capture amount mismatch" {
+		t.Fatalf("event message = %q", event.Message)
+	}
+}
+
 func countGrantsByState(grants []*model.DeliveryGrant, state string) int {
 	count := 0
 	for _, grant := range grants {

@@ -594,6 +594,26 @@ func (s *Service) SetCheckoutPaymentSession(ctx context.Context, orderNo, sessio
 	return s.db.UpdatePaymentSession(ctx, o.ID, sessionID)
 }
 
+func (s *Service) RecordPaymentFailure(ctx context.Context, orderNo, provider, eventType, providerEventID string, amountCents int, message string) error {
+	o, err := s.GetOrderByNo(ctx, orderNo)
+	if err != nil {
+		return err
+	}
+	provider = defaultString(strings.TrimSpace(provider), o.PaymentProvider)
+	eventType = defaultString(strings.TrimSpace(eventType), "payment")
+	return s.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		return s.db.InsertPaymentEventTx(ctx, tx, &model.PaymentEvent{
+			OrderID:         o.ID,
+			Provider:        provider,
+			EventType:       eventType,
+			ProviderEventID: strings.TrimSpace(providerEventID),
+			AmountCents:     amountCents,
+			Success:         false,
+			Message:         strings.TrimSpace(message),
+		})
+	})
+}
+
 func (s *Service) PaymentMethods(ctx context.Context) ([]PaymentMethodConfig, error) {
 	rows, err := s.db.PaymentMethods(ctx)
 	if err != nil {

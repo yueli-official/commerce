@@ -66,6 +66,7 @@ func (c *Checkout) CreateCheckout(ctx context.Context, req *v1.CreateCheckoutReq
 	})
 	if err != nil {
 		g.Log().Errorf(ctx, "checkout CreatePayment failed for order %s provider %s: %+v", order.OrderNo, provider, err)
+		recordPaymentFailure(ctx, c.svc, order, provider, "create_payment", "", err.Error())
 		cancelBestEffort(ctx, c.svc, order.OrderNo)
 		return nil, errs.New(commerceerr.CodeGatewayFailed, "payment gateway error", nil)
 	}
@@ -123,9 +124,11 @@ func (c *Checkout) CaptureCheckout(ctx context.Context, req *v1.CaptureCheckoutR
 		OrderNo: req.OrderNo, SessionID: req.SessionID, AmountCents: order.AmountCents,
 	})
 	if err != nil {
+		c.recordCaptureFailure(ctx, order, req, "", err.Error())
 		return nil, errs.New(commerceerr.CodeGatewayFailed, "payment gateway error", nil)
 	}
 	if !capture.Success {
+		c.recordCaptureFailure(ctx, order, req, capture.ProviderTxID, "payment capture failed")
 		return nil, commerceerr.NotifyInvalid("payment capture failed")
 	}
 	amount := capture.AmountCents
@@ -139,6 +142,22 @@ func (c *Checkout) CaptureCheckout(ctx context.Context, req *v1.CaptureCheckoutR
 	return &v1.CaptureCheckoutRes{
 		OrderNo: req.OrderNo, Token: grant.Token, DeliveryRef: grant.DeliveryRef, State: grant.State,
 	}, nil
+}
+
+func (c *Checkout) recordCaptureFailure(ctx context.Context, order *model.Order, req *v1.CaptureCheckoutReq, providerEventID, message string) {
+	if order == nil || req == nil {
+		return
+	}
+	recordPaymentFailure(ctx, c.svc, order, req.Provider, "capture", providerEventID, message)
+}
+
+func recordPaymentFailure(ctx context.Context, svc *service.Service, order *model.Order, provider, eventType, providerEventID, message string) {
+	if order == nil || svc == nil {
+		return
+	}
+	if err := svc.RecordPaymentFailure(ctx, order.OrderNo, provider, eventType, providerEventID, order.AmountCents, message); err != nil {
+		g.Log().Warningf(ctx, "record payment failure event failed order=%s provider=%s event=%s: %v", order.OrderNo, provider, eventType, err)
+	}
 }
 
 func (c *Checkout) CheckoutStatus(ctx context.Context, req *v1.CheckoutStatusReq) (*v1.CheckoutStatusRes, error) {
