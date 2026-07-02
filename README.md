@@ -18,10 +18,10 @@ It owns provider-neutral payment contracts and concrete provider adapters:
 Use `paykit` from backend services that own payment orchestration, such as
 `services/commerce`.
 
-Do not import `paykit` from storefront apps such as `apps/shop`, or from catalog
-services such as `services/shop`. Storefronts should call commerce checkout and
-order APIs. Commerce owns order snapshots, amount validation, fulfillment,
-payment events, refunds, and future settlement ledgers.
+Do not import `paykit` from storefront apps such as `products/shop/web`, or from
+catalog services such as `products/shop/api`. Storefronts should call commerce
+checkout and order APIs. Commerce owns order snapshots, amount validation,
+fulfillment, payment events, refunds, and future settlement ledgers.
 
 ## Example
 
