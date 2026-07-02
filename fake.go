@@ -8,16 +8,19 @@ type FakeProvider struct {
 	NextCreate  CreatePaymentOut
 	NextCapture CapturePaymentOut
 	NextNotify  NotifyOut
+	NextQuery   QueryPaymentOut
 	NextRefund  RefundOut
 
 	CreateErr  error
 	CaptureErr error
 	NotifyErr  error
+	QueryErr   error
 	RefundErr  error
 
 	CreateCalls  []CreatePaymentIn
 	CaptureCalls []CapturePaymentIn
 	NotifyCalls  []NotifyCall
+	QueryCalls   []QueryPaymentIn
 	RefundCalls  []RefundIn
 }
 
@@ -66,6 +69,15 @@ func (p *FakeProvider) VerifyNotify(_ context.Context, body []byte, headers map[
 		return nil, p.NotifyErr
 	}
 	out := p.NextNotify
+	return &out, nil
+}
+
+func (p *FakeProvider) QueryPayment(_ context.Context, in QueryPaymentIn) (*QueryPaymentOut, error) {
+	p.QueryCalls = append(p.QueryCalls, in)
+	if p.QueryErr != nil {
+		return nil, p.QueryErr
+	}
+	out := p.NextQuery
 	return &out, nil
 }
 

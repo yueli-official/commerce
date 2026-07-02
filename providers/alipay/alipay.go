@@ -108,6 +108,21 @@ func (p *alipayProvider) CapturePayment(context.Context, paykit.CapturePaymentIn
 	return nil, paykit.ErrUnsupportedOperation
 }
 
+func (p *alipayProvider) QueryPayment(ctx context.Context, in paykit.QueryPaymentIn) (*paykit.QueryPaymentOut, error) {
+	query := smartalipay.TradeQuery{OutTradeNo: in.OrderNo, TradeNo: in.ProviderTxID}
+	rsp, err := p.client.TradeQuery(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("alipay TradeQuery: %w", err)
+	}
+	if rsp == nil {
+		return nil, fmt.Errorf("alipay TradeQuery returned empty response")
+	}
+	if rsp.IsFailure() {
+		return nil, fmt.Errorf("alipay TradeQuery failed: %s %s", rsp.Code, rsp.SubMsg)
+	}
+	return queryOutFromTradeQuery(rsp, in.AmountCents)
+}
+
 // VerifyNotify authenticates an Alipay async notify callback.
 // It parses the form-encoded body, verifies the RSA2 signature via
 // DecodeNotification, then maps trade status to NotifyOut.
@@ -144,6 +159,30 @@ func (p *alipayProvider) VerifyNotify(_ context.Context, body []byte, _ map[stri
 		}, nil
 	}
 	return &paykit.NotifyOut{Success: false}, nil
+}
+
+func queryOutFromTradeQuery(rsp *smartalipay.TradeQueryRsp, expectedAmountCents int) (*paykit.QueryPaymentOut, error) {
+	if rsp == nil {
+		return nil, fmt.Errorf("alipay query response is empty")
+	}
+	status := rsp.TradeStatus
+	if status != smartalipay.TradeStatusSuccess && status != smartalipay.TradeStatusFinished {
+		return &paykit.QueryPaymentOut{Success: false, OrderNo: rsp.OutTradeNo, ProviderTxID: rsp.TradeNo}, nil
+	}
+	amount, err := strconv.ParseFloat(rsp.TotalAmount, 64)
+	if err != nil {
+		return nil, fmt.Errorf("alipay query amount parse %q: %w", rsp.TotalAmount, err)
+	}
+	amountCents := int(math.Round(amount * 100))
+	if expectedAmountCents > 0 && amountCents != expectedAmountCents {
+		return nil, fmt.Errorf("alipay query amount mismatch: got %d, want %d", amountCents, expectedAmountCents)
+	}
+	return &paykit.QueryPaymentOut{
+		Success:      true,
+		OrderNo:      rsp.OutTradeNo,
+		ProviderTxID: rsp.TradeNo,
+		AmountCents:  amountCents,
+	}, nil
 }
 
 func (p *alipayProvider) Refund(context.Context, paykit.RefundIn) (*paykit.RefundOut, error) {

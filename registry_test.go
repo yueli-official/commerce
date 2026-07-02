@@ -58,6 +58,12 @@ func TestFakeProviderCreateCaptureNotifyRefund(t *testing.T) {
 		ProviderID:  "RF-1",
 		AmountCents: 9900,
 	}
+	provider.NextQuery = QueryPaymentOut{
+		Success:      true,
+		OrderNo:      "ORD-1",
+		ProviderTxID: "TX-QUERY-1",
+		AmountCents:  9900,
+	}
 
 	create, err := provider.CreatePayment(context.Background(), CreatePaymentIn{
 		OrderNo:     "ORD-1",
@@ -107,8 +113,22 @@ func TestFakeProviderCreateCaptureNotifyRefund(t *testing.T) {
 		t.Fatalf("unexpected refund output: %+v", refund)
 	}
 
+	query, err := provider.QueryPayment(context.Background(), QueryPaymentIn{
+		OrderNo:     "ORD-1",
+		AmountCents: 9900,
+	})
+	if err != nil {
+		t.Fatalf("QueryPayment: %v", err)
+	}
+	if query.ProviderTxID != "TX-QUERY-1" {
+		t.Fatalf("unexpected query output: %+v", query)
+	}
+
 	if len(provider.CreateCalls) != 1 || provider.CreateCalls[0].OrderNo != "ORD-1" {
 		t.Fatalf("create calls not recorded: %+v", provider.CreateCalls)
+	}
+	if len(provider.QueryCalls) != 1 || provider.QueryCalls[0].OrderNo != "ORD-1" {
+		t.Fatalf("query calls not recorded: %+v", provider.QueryCalls)
 	}
 	if string(provider.NotifyCalls[0].Body) != "signed-body" {
 		t.Fatalf("notify call body not recorded: %+v", provider.NotifyCalls)

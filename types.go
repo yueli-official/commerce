@@ -26,6 +26,10 @@ type Provider interface {
 	Refund(ctx context.Context, in RefundIn) (*RefundOut, error)
 }
 
+type QueryPaymentProvider interface {
+	QueryPayment(ctx context.Context, in QueryPaymentIn) (*QueryPaymentOut, error)
+}
+
 type CreatePaymentIn struct {
 	OrderNo     string
 	Subject     string
@@ -58,6 +62,19 @@ type CapturePaymentOut struct {
 }
 
 type NotifyOut struct {
+	Success      bool
+	OrderNo      string
+	ProviderTxID string
+	AmountCents  int
+}
+
+type QueryPaymentIn struct {
+	OrderNo      string
+	ProviderTxID string
+	AmountCents  int
+}
+
+type QueryPaymentOut struct {
 	Success      bool
 	OrderNo      string
 	ProviderTxID string
