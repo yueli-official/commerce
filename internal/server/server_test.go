@@ -2,7 +2,8 @@ package server_test
 
 // HTTP integration test for the commerce service.
 // Requires a live PostgreSQL instance: set COMMERCE_PG_HOST (and optionally
-// COMMERCE_PG_PORT / COMMERCE_PG_USER / COMMERCE_PG_PASS) to run.
+// COMMERCE_PG_PORT / COMMERCE_PG_USER / COMMERCE_PG_PASS / COMMERCE_PG_DB) to run.
+// The schema is rebuilt in COMMERCE_PG_DB, defaulting to commerce_test.
 //
 // Run:
 //
@@ -17,6 +18,8 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -57,6 +60,8 @@ type fakeGateway struct {
 	// successBodies maps raw body bytes to the NotifyOut to return.
 	// When nil, any body with the sentinel prefix triggers success.
 	successBody []byte
+	queryOut    paykit.QueryPaymentOut
+	queryCalls  []paykit.QueryPaymentIn
 }
 
 // failingGateway always returns an error from CreatePayment, simulating a
@@ -109,6 +114,15 @@ func (f *fakeGateway) VerifyNotify(_ context.Context, body []byte, _ map[string]
 		}, nil
 	}
 	return &paykit.NotifyOut{Success: false}, nil
+}
+
+func (f *fakeGateway) QueryPayment(_ context.Context, in paykit.QueryPaymentIn) (*paykit.QueryPaymentOut, error) {
+	f.queryCalls = append(f.queryCalls, in)
+	out := f.queryOut
+	if out.OrderNo == "" {
+		out.OrderNo = in.OrderNo
+	}
+	return &out, nil
 }
 
 func (f *fakeGateway) Refund(context.Context, paykit.RefundIn) (*paykit.RefundOut, error) {
@@ -193,34 +207,42 @@ func pgSetup(t *gtest.T) *dao.PG {
 	port := envOr("COMMERCE_PG_PORT", "5432")
 	user := envOr("COMMERCE_PG_USER", "postgres")
 	pass := envOr("COMMERCE_PG_PASS", "")
+	dbName := envOr("COMMERCE_PG_DB", "commerce_test")
 
-	// Ensure the commerce database exists.
+	// Ensure the isolated commerce test database exists.
 	mdb, err := sql.Open("postgres", fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=postgres sslmode=disable",
 		host, port, user, pass))
 	t.AssertNil(err)
-	_, _ = mdb.Exec("CREATE DATABASE commerce")
+	_, _ = mdb.Exec("CREATE DATABASE " + dbName)
 	mdb.Close()
 
-	// Connect to commerce and (re)apply schema.
+	// Connect to the isolated test DB and (re)apply schema.
 	cdb, err := sql.Open("postgres", fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=commerce sslmode=disable",
-		host, port, user, pass))
-	t.AssertNil(err)
-	migration, err := os.ReadFile("../../manifest/sql/migrations/0001_init.up.sql")
-	t.AssertNil(err)
-	migration2, err := os.ReadFile("../../manifest/sql/migrations/0002_credits_checkin.up.sql")
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		host, port, user, pass, dbName))
 	t.AssertNil(err)
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS checkin_records CASCADE")
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS credits_ledger CASCADE")
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS credits_balances CASCADE")
+	_, _ = cdb.Exec("DROP TABLE IF EXISTS commerce_payment_methods CASCADE")
+	_, _ = cdb.Exec("DROP TABLE IF EXISTS payment_events CASCADE")
+	_, _ = cdb.Exec("DROP TABLE IF EXISTS delivery_grants CASCADE")
+	_, _ = cdb.Exec("DROP TABLE IF EXISTS order_items CASCADE")
+	_, _ = cdb.Exec("DROP TABLE IF EXISTS commerce_buyers CASCADE")
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS entitlements CASCADE")
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS orders CASCADE")
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS products CASCADE")
-	_, err = cdb.Exec(string(migration))
+	_, _ = cdb.Exec("DROP TABLE IF EXISTS schema_migrations CASCADE")
+	migrations, err := filepath.Glob("../../manifest/sql/migrations/*.up.sql")
 	t.AssertNil(err)
-	_, err = cdb.Exec(string(migration2))
-	t.AssertNil(err)
+	sort.Strings(migrations)
+	for _, migrationPath := range migrations {
+		migration, readErr := os.ReadFile(migrationPath)
+		t.AssertNil(readErr)
+		_, execErr := cdb.Exec(string(migration))
+		t.AssertNil(execErr)
+	}
 	cdb.Close()
 
 	db, err := gdb.New(gdb.ConfigNode{
@@ -229,7 +251,7 @@ func pgSetup(t *gtest.T) *dao.PG {
 		Port: port,
 		User: user,
 		Pass: pass,
-		Name: "commerce",
+		Name: dbName,
 	})
 	t.AssertNil(err)
 	return dao.NewPG(db)
@@ -434,6 +456,64 @@ func TestCreateOrder_InputValidation(t *testing.T) {
 	})
 }
 
+func TestCheckoutSyncPaymentQuerySettlesOrder(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		db := pgSetup(t)
+		ctx := context.Background()
+
+		priv, err := rsa.GenerateKey(rand.Reader, 2048)
+		t.AssertNil(err)
+		v := mustVerifier(t, priv)
+		aliceToken := signToken(t, priv, testSubAlice)
+
+		fake := &fakeGateway{}
+		s := newTestServer(t, db, fake, v, false)
+		defer s.Shutdown()
+		base := prefix(s)
+
+		authC := g.Client()
+		authC.SetPrefix(base)
+		authC.SetHeader("Authorization", "Bearer "+aliceToken)
+		authC.SetHeader("Content-Type", "application/json")
+
+		createBody := `{
+			"provider":"alipay",
+			"items":[{
+				"siteKey":"resource","externalId":"sync-checkout-001","variantId":"basic",
+				"title":"Sync Checkout","variantTitle":"Basic","sku":"SYNC-1",
+				"priceCents":100,"currency":"CNY","deliveryKind":"netdisk",
+				"deliveryRef":"{\"netdisk\":{\"provider\":\"manual\",\"url\":\"https://example.test/download\"}}",
+				"quantity":1
+			}]
+		}`
+		createResp, err := authC.Post(ctx, "/api/v1/checkouts", createBody)
+		t.AssertNil(err)
+		defer createResp.Close()
+		t.Assert(createResp.StatusCode, 200)
+		orderNo := gjson.New(createResp.ReadAllString()).Get("data.orderNo").String()
+		t.AssertNE(orderNo, "")
+
+		fake.queryOut = paykit.QueryPaymentOut{
+			Success:      true,
+			OrderNo:      orderNo,
+			ProviderTxID: "ALI-SYNC-TX-1",
+			AmountCents:  100,
+		}
+		syncResp, err := authC.Post(ctx, "/api/v1/checkouts/"+orderNo+"/sync", `{}`)
+		t.AssertNil(err)
+		defer syncResp.Close()
+		t.Assert(syncResp.StatusCode, 200)
+		jSync := gjson.New(syncResp.ReadAllString())
+		t.Assert(jSync.Get("code").String(), "ok")
+		t.Assert(jSync.Get("data.status").String(), model.OrderStatusFulfilled)
+		t.Assert(jSync.Get("data.deliveryState").String(), "granted")
+		t.AssertNE(jSync.Get("data.deliveryRef").String(), "")
+		t.Assert(len(fake.queryCalls), 1)
+		t.Assert(fake.queryCalls[0].OrderNo, orderNo)
+		t.Assert(fake.queryCalls[0].AmountCents, 100)
+	})
+}
+
 // TestCreateOrder_GatewayFailure_OrderCancelled verifies that when the payment
 // gateway's CreatePayment returns an error, the pending order is transitioned
 // to "cancelled" rather than left as an orphan.
@@ -473,9 +553,10 @@ func TestCreateOrder_GatewayFailure_OrderCancelled(t *testing.T) {
 		port := envOr("COMMERCE_PG_PORT", "5432")
 		user := envOr("COMMERCE_PG_USER", "postgres")
 		pass := envOr("COMMERCE_PG_PASS", "")
+		dbName := envOr("COMMERCE_PG_DB", "commerce_test")
 		rawDB, err2 := sql.Open("postgres", fmt.Sprintf(
-			"host=%s port=%s user=%s password=%s dbname=commerce sslmode=disable",
-			host, port, user, pass))
+			"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+			host, port, user, pass, dbName))
 		t.AssertNil(err2)
 		defer rawDB.Close()
 

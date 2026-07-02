@@ -96,6 +96,14 @@ type CheckoutStatusRes struct {
 	DeliveryRef   string `json:"deliveryRef,omitempty"`
 }
 
+type SyncCheckoutReq struct {
+	g.Meta     `path:"/api/v1/checkouts/{orderNo}/sync" method:"POST" tags:"Commerce Checkout" summary:"Query the payment provider and settle a buyer-owned checkout when paid"`
+	OrderNo    string `p:"orderNo" v:"required"`
+	BuyerEmail string `json:"buyerEmail"`
+}
+
+type SyncCheckoutRes = CheckoutStatusRes
+
 type CancelCheckoutReq struct {
 	g.Meta     `path:"/api/v1/checkouts/{orderNo}/cancel" method:"POST" tags:"Commerce Checkout" summary:"Cancel a buyer-owned pending checkout"`
 	OrderNo    string `p:"orderNo" v:"required"`

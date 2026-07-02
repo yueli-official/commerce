@@ -169,15 +169,55 @@ func (c *Checkout) CheckoutStatus(ctx context.Context, req *v1.CheckoutStatusReq
 	if err != nil {
 		return nil, err
 	}
-	res := &v1.CheckoutStatusRes{
-		OrderNo:       status.Order.OrderNo,
-		Status:        status.Order.Status,
-		DeliveryState: status.Order.DeliveryState,
+	return checkoutStatusRes(status), nil
+}
+
+func (c *Checkout) SyncCheckout(ctx context.Context, req *v1.SyncCheckoutReq) (*v1.SyncCheckoutRes, error) {
+	var buyerSub string
+	if p, ok := authjwt.From(ctx); ok && p != nil {
+		buyerSub = p.Subject
 	}
-	if status.Grant != nil {
-		res.DeliveryRef = status.Grant.DeliveryRef
+	status, err := c.svc.CheckoutStatus(ctx, req.OrderNo, buyerSub, req.BuyerEmail)
+	if err != nil {
+		return nil, err
 	}
-	return res, nil
+	order := status.Order
+	if order.Status != model.OrderStatusPaying {
+		return checkoutStatusRes(status), nil
+	}
+	gw, ok := c.registry[order.PaymentProvider]
+	if !ok {
+		return nil, commerceerr.InvalidRequest("payment provider is not registered")
+	}
+	queryGW, ok := gw.(paykit.QueryPaymentProvider)
+	if !ok {
+		return nil, commerceerr.InvalidRequest("payment provider does not support payment query")
+	}
+	query, err := queryGW.QueryPayment(ctx, paykit.QueryPaymentIn{
+		OrderNo:     req.OrderNo,
+		AmountCents: order.AmountCents,
+	})
+	if err != nil {
+		recordPaymentFailure(ctx, c.svc, order, order.PaymentProvider, "query", "", err.Error())
+		return nil, errs.New(commerceerr.CodeGatewayFailed, "payment gateway error", nil)
+	}
+	if query == nil || !query.Success {
+		return checkoutStatusRes(status), nil
+	}
+	amount := query.AmountCents
+	if amount == 0 {
+		amount = order.AmountCents
+	}
+	grant, err := c.svc.SettleCheckout(ctx, req.OrderNo, order.PaymentProvider, query.ProviderTxID, amount)
+	if err != nil {
+		return nil, err
+	}
+	return &v1.SyncCheckoutRes{
+		OrderNo:       req.OrderNo,
+		Status:        model.OrderStatusFulfilled,
+		DeliveryState: model.DeliveryStateGranted,
+		DeliveryRef:   grant.DeliveryRef,
+	}, nil
 }
 
 func (c *Checkout) CancelCheckout(ctx context.Context, req *v1.CancelCheckoutReq) (*v1.CancelCheckoutRes, error) {
@@ -308,6 +348,18 @@ func parseNetdiskDelivery(raw string) *v1.NetdiskDeliveryView {
 		return nil
 	}
 	return payload.Netdisk
+}
+
+func checkoutStatusRes(status *service.CheckoutStatusResult) *v1.CheckoutStatusRes {
+	res := &v1.CheckoutStatusRes{
+		OrderNo:       status.Order.OrderNo,
+		Status:        status.Order.Status,
+		DeliveryState: status.Order.DeliveryState,
+	}
+	if status.Grant != nil {
+		res.DeliveryRef = status.Grant.DeliveryRef
+	}
+	return res
 }
 
 func checkoutSubject(items []v1.CheckoutItemReq) string {
