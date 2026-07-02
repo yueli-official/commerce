@@ -31,8 +31,8 @@ import (
 	_ "github.com/lib/pq"
 
 	"platform/gokit/authjwt"
+	"platform/paykit"
 	"platform/services/commerce/internal/dao"
-	"platform/services/commerce/internal/gateway"
 	"platform/services/commerce/internal/model"
 	"platform/services/commerce/internal/server"
 	"platform/services/commerce/internal/service"
@@ -63,48 +63,56 @@ type fakeGateway struct {
 // gateway outage.  Used to test the order-cancel-on-failure path.
 type failingGateway struct{}
 
-func (f *failingGateway) CreatePayment(_ context.Context, _ gateway.CreateIn) (*gateway.CreatePaymentOut, error) {
+func (f *failingGateway) Name() string {
+	return "alipay"
+}
+
+func (f *failingGateway) CreatePayment(_ context.Context, _ paykit.CreatePaymentIn) (*paykit.CreatePaymentOut, error) {
 	return nil, fmt.Errorf("simulated gateway failure")
 }
 
-func (f *failingGateway) CapturePayment(context.Context, gateway.CapturePaymentIn) (*gateway.CapturePaymentOut, error) {
+func (f *failingGateway) CapturePayment(context.Context, paykit.CapturePaymentIn) (*paykit.CapturePaymentOut, error) {
 	return nil, fmt.Errorf("simulated gateway failure")
 }
 
-func (f *failingGateway) VerifyNotify(_ context.Context, _ []byte, _ map[string]string) (*gateway.NotifyOut, error) {
+func (f *failingGateway) VerifyNotify(_ context.Context, _ []byte, _ map[string]string) (*paykit.NotifyOut, error) {
 	return nil, fmt.Errorf("simulated gateway failure")
 }
 
-func (f *failingGateway) Refund(context.Context, gateway.RefundIn) (*gateway.RefundOut, error) {
+func (f *failingGateway) Refund(context.Context, paykit.RefundIn) (*paykit.RefundOut, error) {
 	return nil, fmt.Errorf("simulated gateway failure")
 }
 
-func (f *fakeGateway) CreatePayment(_ context.Context, in gateway.CreateIn) (*gateway.CreatePaymentOut, error) {
+func (f *fakeGateway) CreatePayment(_ context.Context, in paykit.CreatePaymentIn) (*paykit.CreatePaymentOut, error) {
 	// Record the order number in the sentinel body so VerifyNotify can match.
 	f.successBody = []byte("order=" + in.OrderNo)
-	return &gateway.CreatePaymentOut{Provider: "alipay", Method: string(gateway.CapabilityRedirect), PayURL: fakePayURL}, nil
+	return &paykit.CreatePaymentOut{Provider: "alipay", Method: string(paykit.CapabilityRedirect), PayURL: fakePayURL}, nil
 }
 
-func (f *fakeGateway) CapturePayment(context.Context, gateway.CapturePaymentIn) (*gateway.CapturePaymentOut, error) {
-	return nil, gateway.ErrUnsupportedOperation
+func (f *fakeGateway) Name() string {
+	return "alipay"
 }
 
-func (f *fakeGateway) VerifyNotify(_ context.Context, body []byte, _ map[string]string) (*gateway.NotifyOut, error) {
+func (f *fakeGateway) CapturePayment(context.Context, paykit.CapturePaymentIn) (*paykit.CapturePaymentOut, error) {
+	return nil, paykit.ErrUnsupportedOperation
+}
+
+func (f *fakeGateway) VerifyNotify(_ context.Context, body []byte, _ map[string]string) (*paykit.NotifyOut, error) {
 	if f.successBody != nil && bytes.Equal(body, f.successBody) {
 		// Extract order number from "order=<orderNo>"
 		orderNo := string(body[len("order="):])
-		return &gateway.NotifyOut{
+		return &paykit.NotifyOut{
 			Success:      true,
 			OrderNo:      orderNo,
 			ProviderTxID: "FAKE-TX-" + orderNo,
 			AmountCents:  9900, // must match what CreateOrder stores
 		}, nil
 	}
-	return &gateway.NotifyOut{Success: false}, nil
+	return &paykit.NotifyOut{Success: false}, nil
 }
 
-func (f *fakeGateway) Refund(context.Context, gateway.RefundIn) (*gateway.RefundOut, error) {
-	return nil, gateway.ErrUnsupportedOperation
+func (f *fakeGateway) Refund(context.Context, paykit.RefundIn) (*paykit.RefundOut, error) {
+	return nil, paykit.ErrUnsupportedOperation
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -151,10 +159,10 @@ func newTestServer(t *gtest.T, db *dao.PG, fake *fakeGateway, v *authjwt.Verifie
 	return newTestServerWithGW(t, db, fake, v, devSettle)
 }
 
-func newTestServerWithGW(t *gtest.T, db *dao.PG, gw gateway.PaymentGateway, v *authjwt.Verifier, devSettle bool) *ghttp.Server {
+func newTestServerWithGW(t *gtest.T, db *dao.PG, gw paykit.Provider, v *authjwt.Verifier, devSettle bool) *ghttp.Server {
 	serverSeq++
 	name := fmt.Sprintf("%s-%d", t.Name(), serverSeq)
-	reg := gateway.Registry{"alipay": gw}
+	reg := paykit.Registry{"alipay": gw}
 	s := g.Server(name)
 	s.SetAddr("127.0.0.1:0")
 	server.Configure(s, server.Deps{

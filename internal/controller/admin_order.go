@@ -4,19 +4,19 @@ import (
 	"context"
 
 	"platform/gokit/authjwt"
+	"platform/paykit"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
-	"platform/services/commerce/internal/gateway"
 	"platform/services/commerce/internal/model"
 	"platform/services/commerce/internal/service"
 )
 
 type AdminOrder struct {
 	svc      *service.Service
-	registry gateway.Registry
+	registry paykit.Registry
 }
 
-func NewAdminOrder(svc *service.Service, reg gateway.Registry) *AdminOrder {
+func NewAdminOrder(svc *service.Service, reg paykit.Registry) *AdminOrder {
 	return &AdminOrder{svc: svc, registry: reg}
 }
 
@@ -95,7 +95,7 @@ func (c *AdminOrder) RefundOrder(ctx context.Context, req *v1.AdminOrderRefundRe
 	if !ok {
 		return nil, commerceerr.InvalidRequest("payment provider does not support refund")
 	}
-	out, err := gw.Refund(ctx, gateway.RefundIn{
+	out, err := gw.Refund(ctx, paykit.RefundIn{
 		OrderNo:      order.OrderNo,
 		ProviderTxID: order.ProviderTxID,
 		AmountCents:  order.AmountCents,

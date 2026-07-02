@@ -3,17 +3,17 @@ package controller
 import (
 	"context"
 
+	"platform/paykit"
 	v1 "platform/services/commerce/api/v1"
-	"platform/services/commerce/internal/gateway"
 	"platform/services/commerce/internal/service"
 )
 
 type PaymentConfig struct {
 	svc      *service.Service
-	registry gateway.Registry
+	registry paykit.Registry
 }
 
-func NewPaymentConfig(svc *service.Service, reg gateway.Registry) *PaymentConfig {
+func NewPaymentConfig(svc *service.Service, reg paykit.Registry) *PaymentConfig {
 	return &PaymentConfig{svc: svc, registry: reg}
 }
 

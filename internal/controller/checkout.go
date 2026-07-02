@@ -9,20 +9,20 @@ import (
 
 	"platform/gokit/authjwt"
 	"platform/gokit/errs"
+	"platform/paykit"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
-	"platform/services/commerce/internal/gateway"
 	"platform/services/commerce/internal/model"
 	"platform/services/commerce/internal/service"
 )
 
 type Checkout struct {
 	svc       *service.Service
-	registry  gateway.Registry
+	registry  paykit.Registry
 	notifyURL string
 }
 
-func NewCheckout(svc *service.Service, reg gateway.Registry, notifyURL string) *Checkout {
+func NewCheckout(svc *service.Service, reg paykit.Registry, notifyURL string) *Checkout {
 	return &Checkout{svc: svc, registry: reg, notifyURL: notifyURL}
 }
 
@@ -56,7 +56,7 @@ func (c *Checkout) CreateCheckout(ctx context.Context, req *v1.CreateCheckoutReq
 		return nil, err
 	}
 
-	payment, err := gw.CreatePayment(ctx, gateway.CreateIn{
+	payment, err := gw.CreatePayment(ctx, paykit.CreatePaymentIn{
 		OrderNo:     order.OrderNo,
 		Subject:     checkoutSubject(req.Items),
 		AmountCents: order.AmountCents,
@@ -120,7 +120,7 @@ func (c *Checkout) CaptureCheckout(ctx context.Context, req *v1.CaptureCheckoutR
 	if !ok {
 		return nil, commerceerr.InvalidRequest("unsupported payment provider")
 	}
-	capture, err := gw.CapturePayment(ctx, gateway.CapturePaymentIn{
+	capture, err := gw.CapturePayment(ctx, paykit.CapturePaymentIn{
 		OrderNo: req.OrderNo, SessionID: req.SessionID, AmountCents: order.AmountCents,
 	})
 	if err != nil {

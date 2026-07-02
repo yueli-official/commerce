@@ -10,9 +10,12 @@ import (
 	_ "github.com/gogf/gf/contrib/drivers/pgsql/v2"
 
 	"platform/gokit/authjwt"
+	"platform/paykit"
+	payalipay "platform/paykit/providers/alipay"
+	paypal "platform/paykit/providers/paypal"
+	wechat "platform/paykit/providers/wechat"
 	"platform/services/commerce/internal/appconfig"
 	"platform/services/commerce/internal/dao"
-	"platform/services/commerce/internal/gateway"
 	"platform/services/commerce/internal/server"
 )
 
@@ -69,10 +72,10 @@ func main() {
 	s.Run()
 }
 
-func buildGatewayRegistry(alipayCfg appconfig.Alipay, paypalCfg appconfig.PayPal, wechatCfg appconfig.WeChat) (gateway.Registry, error) {
-	reg := gateway.Registry{}
+func buildGatewayRegistry(alipayCfg appconfig.Alipay, paypalCfg appconfig.PayPal, wechatCfg appconfig.WeChat) (paykit.Registry, error) {
+	reg := paykit.NewRegistry()
 	if alipayCfg.AppID != "" && alipayCfg.PrivateKey != "" {
-		alipayGW, err := gateway.NewAlipayProvider(gateway.AlipayConfig{
+		alipayGW, err := payalipay.NewProvider(payalipay.Config{
 			AppID:           alipayCfg.AppID,
 			PrivateKey:      alipayCfg.PrivateKey,
 			AlipayPublicKey: alipayCfg.AlipayPublicKey,
@@ -81,10 +84,12 @@ func buildGatewayRegistry(alipayCfg appconfig.Alipay, paypalCfg appconfig.PayPal
 		if err != nil {
 			return nil, err
 		}
-		reg["alipay"] = alipayGW
+		if err := reg.Register(alipayGW); err != nil {
+			return nil, err
+		}
 	}
 	if paypalCfg.ClientID != "" && paypalCfg.ClientSecret != "" {
-		paypalGW, err := gateway.NewPayPalProvider(gateway.PayPalConfig{
+		paypalGW, err := paypal.NewProvider(paypal.Config{
 			ClientID:     paypalCfg.ClientID,
 			ClientSecret: paypalCfg.ClientSecret,
 			Sandbox:      paypalCfg.Sandbox,
@@ -93,11 +98,13 @@ func buildGatewayRegistry(alipayCfg appconfig.Alipay, paypalCfg appconfig.PayPal
 		if err != nil {
 			return nil, err
 		}
-		reg["paypal"] = paypalGW
+		if err := reg.Register(paypalGW); err != nil {
+			return nil, err
+		}
 	}
 	if wechatCfg.MerchantID != "" && wechatCfg.MerchantCertSN != "" && wechatCfg.MerchantAPIv3Key != "" &&
 		wechatCfg.PrivateKey != "" && wechatCfg.AppID != "" {
-		wechatGW, err := gateway.NewWeChatProvider(gateway.WeChatConfig{
+		wechatGW, err := wechat.NewProvider(wechat.Config{
 			MerchantID:       wechatCfg.MerchantID,
 			MerchantCertSN:   wechatCfg.MerchantCertSN,
 			MerchantAPIv3Key: wechatCfg.MerchantAPIv3Key,
@@ -108,7 +115,9 @@ func buildGatewayRegistry(alipayCfg appconfig.Alipay, paypalCfg appconfig.PayPal
 		if err != nil {
 			return nil, err
 		}
-		reg["wechat"] = wechatGW
+		if err := reg.Register(wechatGW); err != nil {
+			return nil, err
+		}
 	}
 	return reg, nil
 }

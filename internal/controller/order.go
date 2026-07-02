@@ -8,9 +8,9 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"platform/gokit/authjwt"
 	"platform/gokit/errs"
+	"platform/paykit"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
-	"platform/services/commerce/internal/gateway"
 	"platform/services/commerce/internal/model"
 	"platform/services/commerce/internal/service"
 )
@@ -18,7 +18,7 @@ import (
 // Order handles POST /api/v1/orders.
 type Order struct {
 	svc       *service.Service
-	registry  gateway.Registry
+	registry  paykit.Registry
 	notifyURL string
 	returnURL string
 }
@@ -27,7 +27,7 @@ type Order struct {
 // notifyURL is the full URL that the payment provider will POST the async
 // notify to (e.g. "https://example.com/api/v1/payments/alipay/notify").
 // returnURL is the URL the buyer is redirected to after paying.
-func NewOrder(svc *service.Service, reg gateway.Registry, notifyURL, returnURL string) *Order {
+func NewOrder(svc *service.Service, reg paykit.Registry, notifyURL, returnURL string) *Order {
 	return &Order{svc: svc, registry: reg, notifyURL: notifyURL, returnURL: returnURL}
 }
 
@@ -84,7 +84,7 @@ func (c *Order) CreateOrder(ctx context.Context, req *v1.CreateOrderReq) (*v1.Cr
 		return nil, errs.New(commerceerr.CodeGatewayFailed, "alipay gateway not registered", nil)
 	}
 
-	payment, err := gw.CreatePayment(ctx, gateway.CreateIn{
+	payment, err := gw.CreatePayment(ctx, paykit.CreatePaymentIn{
 		OrderNo:     order.OrderNo,
 		Subject:     req.Title,
 		AmountCents: order.AmountCents,

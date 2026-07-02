@@ -8,9 +8,9 @@ import (
 	"platform/gokit/authjwt"
 	"platform/gokit/ghttpx"
 	"platform/gokit/response"
+	"platform/paykit"
 	"platform/services/commerce/internal/controller"
 	"platform/services/commerce/internal/dao"
-	"platform/services/commerce/internal/gateway"
 	"platform/services/commerce/internal/service"
 )
 
@@ -18,7 +18,7 @@ import (
 type Deps struct {
 	Verifier  *authjwt.Verifier
 	DB        *dao.PG
-	Registry  gateway.Registry
+	Registry  paykit.Registry
 	NotifyURL string                // base URL for the alipay notify callback
 	ReturnURL string                // URL the buyer is sent to after paying
 	DevSettle bool                  // when true, register the /dev/orders/{orderNo}/settle endpoint

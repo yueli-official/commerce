@@ -5,7 +5,7 @@ import (
 
 	"github.com/gogf/gf/v2/net/ghttp"
 
-	"platform/services/commerce/internal/gateway"
+	"platform/paykit"
 	"platform/services/commerce/internal/service"
 )
 
@@ -14,12 +14,12 @@ import (
 // requires exactly this; do NOT wrap in the gokit envelope.
 type Notify struct {
 	provider string
-	gw       gateway.PaymentGateway
+	gw       paykit.Provider
 	svc      *service.Service
 }
 
 // NewNotify constructs a Notify controller.
-func NewNotify(provider string, gw gateway.PaymentGateway, svc *service.Service) *Notify {
+func NewNotify(provider string, gw paykit.Provider, svc *service.Service) *Notify {
 	return &Notify{provider: provider, gw: gw, svc: svc}
 }
 
