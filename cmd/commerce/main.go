@@ -29,71 +29,18 @@ func main() {
 		panic(err)
 	}
 
-	// Build the Alipay provider from config.
-	// When credentials are absent (local dev default config) the provider is
-	// omitted from the registry; the service boots but CreateOrder will return
-	// commerce.gateway_failed until real credentials are supplied.
 	alipayCfg := appconfig.LoadAlipay(ctx)
-	reg := gateway.Registry{}
-	if alipayCfg.AppID != "" && alipayCfg.PrivateKey != "" {
-		alipayGW, err := gateway.NewAlipayProvider(gateway.AlipayConfig{
-			AppID:           alipayCfg.AppID,
-			PrivateKey:      alipayCfg.PrivateKey,
-			AlipayPublicKey: alipayCfg.AlipayPublicKey,
-			Sandbox:         alipayCfg.Sandbox,
-		})
-		if err != nil {
-			panic(err)
-		}
-		reg["alipay"] = alipayGW
-	}
 	paypalCfg := appconfig.LoadPayPal(ctx)
-	if paypalCfg.ClientID != "" && paypalCfg.ClientSecret != "" {
-		paypalGW, err := gateway.NewPayPalProvider(gateway.PayPalConfig{
-			ClientID:     paypalCfg.ClientID,
-			ClientSecret: paypalCfg.ClientSecret,
-			Sandbox:      paypalCfg.Sandbox,
-			BaseURL:      paypalCfg.BaseURL,
-		})
-		if err != nil {
-			panic(err)
-		}
-		reg["paypal"] = paypalGW
-	}
 	wechatCfg := appconfig.LoadWeChat(ctx)
-	if wechatCfg.MerchantID != "" && wechatCfg.MerchantCertSN != "" && wechatCfg.MerchantAPIv3Key != "" &&
-		wechatCfg.PrivateKey != "" && wechatCfg.AppID != "" {
-		wechatGW, err := gateway.NewWeChatProvider(gateway.WeChatConfig{
-			MerchantID:       wechatCfg.MerchantID,
-			MerchantCertSN:   wechatCfg.MerchantCertSN,
-			MerchantAPIv3Key: wechatCfg.MerchantAPIv3Key,
-			PrivateKey:       wechatCfg.PrivateKey,
-			AppID:            wechatCfg.AppID,
-			NotifyURL:        wechatCfg.NotifyURL,
-		})
-		if err != nil {
-			panic(err)
-		}
-		reg["wechat"] = wechatGW
+	reg, err := buildGatewayRegistry(alipayCfg, paypalCfg, wechatCfg)
+	if err != nil {
+		panic(err)
 	}
 
 	devSettle := g.Cfg().MustGet(ctx, "commerce.devSettle").Bool()
-	if devSettle {
-		if _, ok := reg["alipay"]; !ok {
-			reg["alipay"] = gateway.NewAlipayStubProvider()
-		}
-		if _, ok := reg["wechat"]; !ok {
-			reg["wechat"] = gateway.NewWeChatStubProvider()
-		}
-		if _, ok := reg["paypal"]; !ok {
-			reg["paypal"] = gateway.NewPayPalStubProvider()
-		}
-	}
-
 	// Prod-safety guard: devSettle backdoor must never reach a real Alipay endpoint.
 	if devSettle {
 		if alipayCfg.AppID != "" && !alipayCfg.Sandbox {
-			// Non-sandbox Alipay config with devSettle enabled — refuse to start.
 			log.Fatal("FATAL: commerce.devSettle=true but Alipay is configured for production (sandbox=false). " +
 				"The devSettle backdoor must not be enabled against non-sandbox Alipay. Aborting.")
 		}
@@ -120,4 +67,48 @@ func main() {
 	})
 	g.Log().Info(ctx, "commerce-service starting")
 	s.Run()
+}
+
+func buildGatewayRegistry(alipayCfg appconfig.Alipay, paypalCfg appconfig.PayPal, wechatCfg appconfig.WeChat) (gateway.Registry, error) {
+	reg := gateway.Registry{}
+	if alipayCfg.AppID != "" && alipayCfg.PrivateKey != "" {
+		alipayGW, err := gateway.NewAlipayProvider(gateway.AlipayConfig{
+			AppID:           alipayCfg.AppID,
+			PrivateKey:      alipayCfg.PrivateKey,
+			AlipayPublicKey: alipayCfg.AlipayPublicKey,
+			Sandbox:         alipayCfg.Sandbox,
+		})
+		if err != nil {
+			return nil, err
+		}
+		reg["alipay"] = alipayGW
+	}
+	if paypalCfg.ClientID != "" && paypalCfg.ClientSecret != "" {
+		paypalGW, err := gateway.NewPayPalProvider(gateway.PayPalConfig{
+			ClientID:     paypalCfg.ClientID,
+			ClientSecret: paypalCfg.ClientSecret,
+			Sandbox:      paypalCfg.Sandbox,
+			BaseURL:      paypalCfg.BaseURL,
+		})
+		if err != nil {
+			return nil, err
+		}
+		reg["paypal"] = paypalGW
+	}
+	if wechatCfg.MerchantID != "" && wechatCfg.MerchantCertSN != "" && wechatCfg.MerchantAPIv3Key != "" &&
+		wechatCfg.PrivateKey != "" && wechatCfg.AppID != "" {
+		wechatGW, err := gateway.NewWeChatProvider(gateway.WeChatConfig{
+			MerchantID:       wechatCfg.MerchantID,
+			MerchantCertSN:   wechatCfg.MerchantCertSN,
+			MerchantAPIv3Key: wechatCfg.MerchantAPIv3Key,
+			PrivateKey:       wechatCfg.PrivateKey,
+			AppID:            wechatCfg.AppID,
+			NotifyURL:        wechatCfg.NotifyURL,
+		})
+		if err != nil {
+			return nil, err
+		}
+		reg["wechat"] = wechatGW
+	}
+	return reg, nil
 }
