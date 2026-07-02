@@ -107,6 +107,21 @@ type AssetDeliveryClient interface {
 	CreateDelivery(ctx context.Context, in AssetDeliveryInput) (AssetDeliveryOutput, error)
 }
 
+type CurrentDeliveryInput struct {
+	SiteKey    string
+	ExternalID string
+	VariantID  string
+}
+
+type CurrentDeliveryResult struct {
+	DeliveryKind string
+	DeliveryRef  string
+}
+
+type CurrentDeliveryResolver interface {
+	CurrentDelivery(ctx context.Context, in CurrentDeliveryInput) (CurrentDeliveryResult, error)
+}
+
 type OrderDetailResult struct {
 	Order  *model.Order
 	Items  []*model.OrderItem
@@ -199,13 +214,20 @@ func WithAssetDeliveryClient(client AssetDeliveryClient) Option {
 	}
 }
 
+func WithCurrentDeliveryResolver(resolver CurrentDeliveryResolver) Option {
+	return func(s *Service) {
+		s.ConfigureCurrentDeliveryResolver(resolver)
+	}
+}
+
 // Service holds the DAO and implements the commerce domain logic.
 type Service struct {
-	db            *dao.PG
-	checkin       CheckinConfig
-	delivery      DeliveryConfig
-	mailer        DeliveryMailer
-	assetDelivery AssetDeliveryClient
+	db              *dao.PG
+	checkin         CheckinConfig
+	delivery        DeliveryConfig
+	mailer          DeliveryMailer
+	assetDelivery   AssetDeliveryClient
+	currentDelivery CurrentDeliveryResolver
 }
 
 // New constructs a Service.
@@ -232,6 +254,10 @@ func (s *Service) ConfigureDeliveryMailer(mailer DeliveryMailer) {
 
 func (s *Service) ConfigureAssetDeliveryClient(client AssetDeliveryClient) {
 	s.assetDelivery = client
+}
+
+func (s *Service) ConfigureCurrentDeliveryResolver(resolver CurrentDeliveryResolver) {
+	s.currentDelivery = resolver
 }
 
 // CreateOrder lazily upserts the product from desc, then inserts a new order in
@@ -1140,14 +1166,27 @@ func (s *Service) resolveAssetDelivery(ctx context.Context, delivery *DeliveryRe
 		kind = strings.TrimSpace(delivery.Item.DeliveryKindSnapshot)
 	}
 	deliveryRef := delivery.Grant.DeliveryRef
+	if kind == "bundle" && deliveryBundleUpdatePolicy(delivery.Grant.DeliveryRef) == "latest" {
+		current, err := s.currentDeliveryRef(ctx, delivery)
+		if err != nil {
+			if _, snapshotErr := assetIDFromDeliveryBundle(delivery.Grant.DeliveryRef, firstString(requestedAssetID)); snapshotErr != nil {
+				return DeliveryDownloadResult{}, err
+			}
+		} else if strings.TrimSpace(current.DeliveryRef) != "" {
+			kind = defaultString(current.DeliveryKind, kind)
+			deliveryRef = current.DeliveryRef
+		}
+	}
 	if kind == "bundle" {
-		resolved, err := assetIDFromDeliveryBundle(delivery.Grant.DeliveryRef, firstString(requestedAssetID))
+		resolved, err := assetIDFromDeliveryBundle(deliveryRef, firstString(requestedAssetID))
 		if err != nil {
 			return DeliveryDownloadResult{}, err
 		}
 		deliveryRef = resolved
 	} else if kind != "asset_file" {
 		return DeliveryDownloadResult{}, commerceerr.InvalidRequest("delivery is not an asset file")
+	} else if requested := strings.TrimSpace(firstString(requestedAssetID)); requested != "" && strings.TrimSpace(deliveryRef) != requested {
+		return DeliveryDownloadResult{}, commerceerr.Forbidden()
 	}
 	res := DeliveryDownloadResult{DeliveryRef: deliveryRef, ExpiresAt: expiresAt}
 	if s.assetDelivery == nil || strings.TrimSpace(deliveryRef) == "" {
@@ -1167,6 +1206,31 @@ func (s *Service) resolveAssetDelivery(ctx context.Context, delivery *DeliveryRe
 		res.ExpiresAt = assetOut.ExpiresAt
 	}
 	return res, nil
+}
+
+func (s *Service) currentDeliveryRef(ctx context.Context, delivery *DeliveryResult) (CurrentDeliveryResult, error) {
+	if s.currentDelivery == nil || delivery == nil || delivery.Item == nil {
+		return CurrentDeliveryResult{}, nil
+	}
+	return s.currentDelivery.CurrentDelivery(ctx, CurrentDeliveryInput{
+		SiteKey:    strings.TrimSpace(delivery.Item.SiteKey),
+		ExternalID: strings.TrimSpace(delivery.Item.ExternalID),
+		VariantID:  strings.TrimSpace(delivery.Item.VariantID),
+	})
+}
+
+func deliveryBundleUpdatePolicy(raw string) string {
+	var payload struct {
+		UpdatePolicy string `json:"updatePolicy"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return ""
+	}
+	policy := strings.TrimSpace(payload.UpdatePolicy)
+	if policy == "" {
+		return "snapshot"
+	}
+	return policy
 }
 
 func assetIDFromDeliveryBundle(raw, requested string) (string, error) {

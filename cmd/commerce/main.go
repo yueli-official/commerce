@@ -57,16 +57,17 @@ func main() {
 	db := dao.NewPG(g.DB())
 	s := g.Server()
 	server.Configure(s, server.Deps{
-		Verifier:  verifier,
-		DB:        db,
-		Registry:  reg,
-		NotifyURL: notifyURL,
-		ReturnURL: returnURL,
-		DevSettle: devSettle,
-		Checkin:   appconfig.LoadCheckin(ctx),
-		Delivery:  appconfig.LoadDelivery(ctx),
-		Mailer:    appconfig.BuildDeliveryMailer(ctx),
-		Asset:     appconfig.BuildAssetDeliveryClient(ctx),
+		Verifier:        verifier,
+		DB:              db,
+		Registry:        reg,
+		NotifyURL:       notifyURL,
+		ReturnURL:       returnURL,
+		DevSettle:       devSettle,
+		Checkin:         appconfig.LoadCheckin(ctx),
+		Delivery:        appconfig.LoadDelivery(ctx),
+		Mailer:          appconfig.BuildDeliveryMailer(ctx),
+		Asset:           appconfig.BuildAssetDeliveryClient(ctx),
+		CurrentDelivery: appconfig.BuildCurrentDeliveryResolver(ctx),
 	})
 	g.Log().Info(ctx, "commerce-service starting")
 	s.Run()

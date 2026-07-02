@@ -16,16 +16,17 @@ import (
 
 // Deps are the wiring dependencies for the commerce server.
 type Deps struct {
-	Verifier  *authjwt.Verifier
-	DB        *dao.PG
-	Registry  paykit.Registry
-	NotifyURL string                // base URL for the alipay notify callback
-	ReturnURL string                // URL the buyer is sent to after paying
-	DevSettle bool                  // when true, register the /dev/orders/{orderNo}/settle endpoint
-	Checkin   service.CheckinConfig // daily check-in reward curve
-	Delivery  service.DeliveryConfig
-	Mailer    service.DeliveryMailer
-	Asset     service.AssetDeliveryClient
+	Verifier        *authjwt.Verifier
+	DB              *dao.PG
+	Registry        paykit.Registry
+	NotifyURL       string                // base URL for the alipay notify callback
+	ReturnURL       string                // URL the buyer is sent to after paying
+	DevSettle       bool                  // when true, register the /dev/orders/{orderNo}/settle endpoint
+	Checkin         service.CheckinConfig // daily check-in reward curve
+	Delivery        service.DeliveryConfig
+	Mailer          service.DeliveryMailer
+	Asset           service.AssetDeliveryClient
+	CurrentDelivery service.CurrentDeliveryResolver
 }
 
 // Configure mounts the commerce-service routes onto s.
@@ -36,6 +37,7 @@ func Configure(s *ghttp.Server, d Deps) {
 		service.WithDeliveryConfig(d.Delivery),
 		service.WithDeliveryMailer(d.Mailer),
 		service.WithAssetDeliveryClient(d.Asset),
+		service.WithCurrentDeliveryResolver(d.CurrentDelivery),
 	)
 
 	// ── Public: liveness ────────────────────────────────────────────────────

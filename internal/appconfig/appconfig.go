@@ -11,6 +11,7 @@ import (
 	"platform/gokit/mail"
 	"platform/services/commerce/internal/assetclient"
 	"platform/services/commerce/internal/service"
+	"platform/services/commerce/internal/shopclient"
 )
 
 // JWKS holds the IdP key/issuer config for the authjwt verifier.
@@ -92,6 +93,34 @@ func BuildAssetDeliveryClient(ctx context.Context) service.AssetDeliveryClient {
 		panic(err)
 	}
 	return assetDeliveryAdapter{client: client}
+}
+
+type currentDeliveryAdapter struct {
+	client *shopclient.Client
+}
+
+func (a currentDeliveryAdapter) CurrentDelivery(ctx context.Context, in service.CurrentDeliveryInput) (service.CurrentDeliveryResult, error) {
+	out, err := a.client.CurrentDelivery(ctx, shopclient.CurrentDeliveryInput{
+		SiteKey: in.SiteKey, ExternalID: in.ExternalID, VariantID: in.VariantID,
+	})
+	if err != nil {
+		return service.CurrentDeliveryResult{}, err
+	}
+	return service.CurrentDeliveryResult{DeliveryKind: out.DeliveryKind, DeliveryRef: out.DeliveryRef}, nil
+}
+
+func BuildCurrentDeliveryResolver(ctx context.Context) service.CurrentDeliveryResolver {
+	cfg := shopclient.Config{
+		BaseURL: g.Cfg().MustGet(ctx, "commerce.shopService.base_url").String(),
+	}
+	if cfg.BaseURL == "" {
+		return nil
+	}
+	client, err := shopclient.New(cfg)
+	if err != nil {
+		panic(err)
+	}
+	return currentDeliveryAdapter{client: client}
 }
 
 // Alipay holds the Alipay payment provider config.

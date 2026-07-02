@@ -51,6 +51,11 @@ commerce:
     client_secret: ""
     scope: "asset:sign"
 
+  shopService:
+    # Optional: when configured, purchases whose delivery bundle uses
+    # updatePolicy=latest resolve current shop variant delivery before signing.
+    base_url: "http://localhost:8088"
+
   mailer:
     mode: "dev" # dev | smtp
     smtp:
