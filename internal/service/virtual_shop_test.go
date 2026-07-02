@@ -437,6 +437,50 @@ func TestPurchasesListsLoggedInDeliveryGrants(t *testing.T) {
 	}
 }
 
+func TestResolvePurchaseDownloadSelectsAssetFromBundle(t *testing.T) {
+	svc, _, ctx := newSvc(t)
+	assetDelivery := &captureAssetDelivery{url: "https://asset.example/grants/bundle-token"}
+	svc.ConfigureAssetDeliveryClient(assetDelivery)
+	sub := uid("bundle-buyer")
+	order, err := svc.CreateCheckout(ctx, service.CheckoutDesc{
+		BuyerSub:   sub,
+		BuyerEmail: "bundle@example.com",
+		Provider:   "alipay",
+		Items: []service.CheckoutItemDesc{{
+			SiteKey:      "shop",
+			ExternalID:   uid("product-bundle"),
+			VariantID:    uid("variant-bundle"),
+			Title:        "Bundle Pack",
+			VariantTitle: "Standard",
+			SKU:          "BUNDLE-STD",
+			PriceCents:   1200,
+			Currency:     "CNY",
+			DeliveryKind: "bundle",
+			DeliveryRef:  `{"items":[{"kind":"asset_file","assetId":"asset-a","enabled":true},{"kind":"asset_file","assetId":"asset-b","enabled":true}]}`,
+			Quantity:     1,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckout: %v", err)
+	}
+	if _, err := svc.SettleCheckout(ctx, order.OrderNo, "dev", "dev-bundle", 1200); err != nil {
+		t.Fatalf("SettleCheckout: %v", err)
+	}
+	download, err := svc.ResolvePurchaseDownload(ctx, sub, order.OrderNo, "asset-b")
+	if err != nil {
+		t.Fatalf("ResolvePurchaseDownload: %v", err)
+	}
+	if download.DeliveryRef != "asset-b" {
+		t.Fatalf("delivery ref = %q, want asset-b", download.DeliveryRef)
+	}
+	if assetDelivery.assetID != "asset-b" {
+		t.Fatalf("asset delivery asset = %q, want asset-b", assetDelivery.assetID)
+	}
+	if _, err := svc.ResolvePurchaseDownload(ctx, sub, order.OrderNo, "asset-missing"); err == nil {
+		t.Fatal("expected missing bundle asset to fail")
+	}
+}
+
 func TestAdminOrderSupportActions(t *testing.T) {
 	svc, _, ctx := newSvc(t)
 	mailer := &captureDeliveryMailer{}

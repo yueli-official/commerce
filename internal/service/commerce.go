@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
@@ -1122,15 +1123,15 @@ func (s *Service) ResolveDeliveryDownload(ctx context.Context, token, exp, sig s
 	return s.resolveAssetDelivery(ctx, delivery, expiresAt)
 }
 
-func (s *Service) ResolvePurchaseDownload(ctx context.Context, buyerSub, orderNo string) (DeliveryDownloadResult, error) {
+func (s *Service) ResolvePurchaseDownload(ctx context.Context, buyerSub, orderNo, assetID string) (DeliveryDownloadResult, error) {
 	delivery, err := s.PurchaseByOrder(ctx, buyerSub, orderNo)
 	if err != nil {
 		return DeliveryDownloadResult{}, err
 	}
-	return s.resolveAssetDelivery(ctx, delivery, time.Now().UTC().Add(s.delivery.TTL))
+	return s.resolveAssetDelivery(ctx, delivery, time.Now().UTC().Add(s.delivery.TTL), assetID)
 }
 
-func (s *Service) resolveAssetDelivery(ctx context.Context, delivery *DeliveryResult, expiresAt time.Time) (DeliveryDownloadResult, error) {
+func (s *Service) resolveAssetDelivery(ctx context.Context, delivery *DeliveryResult, expiresAt time.Time, requestedAssetID ...string) (DeliveryDownloadResult, error) {
 	if delivery == nil || delivery.Grant == nil {
 		return DeliveryDownloadResult{}, commerceerr.OrderNotFound("delivery")
 	}
@@ -1138,15 +1139,22 @@ func (s *Service) resolveAssetDelivery(ctx context.Context, delivery *DeliveryRe
 	if delivery.Item != nil && strings.TrimSpace(delivery.Item.DeliveryKindSnapshot) != "" {
 		kind = strings.TrimSpace(delivery.Item.DeliveryKindSnapshot)
 	}
-	if kind != "asset_file" {
+	deliveryRef := delivery.Grant.DeliveryRef
+	if kind == "bundle" {
+		resolved, err := assetIDFromDeliveryBundle(delivery.Grant.DeliveryRef, firstString(requestedAssetID))
+		if err != nil {
+			return DeliveryDownloadResult{}, err
+		}
+		deliveryRef = resolved
+	} else if kind != "asset_file" {
 		return DeliveryDownloadResult{}, commerceerr.InvalidRequest("delivery is not an asset file")
 	}
-	res := DeliveryDownloadResult{DeliveryRef: delivery.Grant.DeliveryRef, ExpiresAt: expiresAt}
-	if s.assetDelivery == nil || strings.TrimSpace(delivery.Grant.DeliveryRef) == "" {
+	res := DeliveryDownloadResult{DeliveryRef: deliveryRef, ExpiresAt: expiresAt}
+	if s.assetDelivery == nil || strings.TrimSpace(deliveryRef) == "" {
 		return res, nil
 	}
 	assetOut, err := s.assetDelivery.CreateDelivery(ctx, AssetDeliveryInput{
-		AssetID:   delivery.Grant.DeliveryRef,
+		AssetID:   deliveryRef,
 		SubjectID: deliverySubject(delivery.Order),
 		ExpiresIn: secondsUntil(expiresAt),
 		Reason:    "commerce:" + delivery.Order.OrderNo,
@@ -1159,6 +1167,49 @@ func (s *Service) resolveAssetDelivery(ctx context.Context, delivery *DeliveryRe
 		res.ExpiresAt = assetOut.ExpiresAt
 	}
 	return res, nil
+}
+
+func assetIDFromDeliveryBundle(raw, requested string) (string, error) {
+	var payload struct {
+		Items []struct {
+			Kind    string `json:"kind"`
+			AssetID string `json:"assetId"`
+			Enabled *bool  `json:"enabled"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return "", commerceerr.InvalidRequest("invalid delivery bundle")
+	}
+	assets := make([]string, 0, len(payload.Items))
+	for _, item := range payload.Items {
+		if item.Enabled != nil && !*item.Enabled {
+			continue
+		}
+		if item.Kind != "asset_file" || strings.TrimSpace(item.AssetID) == "" {
+			continue
+		}
+		assets = append(assets, strings.TrimSpace(item.AssetID))
+	}
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		if len(assets) == 1 {
+			return assets[0], nil
+		}
+		return "", commerceerr.InvalidRequest("assetId is required for bundled delivery")
+	}
+	for _, assetID := range assets {
+		if assetID == requested {
+			return requested, nil
+		}
+	}
+	return "", commerceerr.Forbidden()
+}
+
+func firstString(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
 }
 
 func deliverySubject(order *model.Order) string {

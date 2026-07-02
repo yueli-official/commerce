@@ -289,7 +289,7 @@ func (c *Checkout) MyPurchaseDownload(ctx context.Context, req *v1.MyPurchaseDow
 	if !ok || p == nil {
 		return nil, commerceerr.Forbidden()
 	}
-	download, err := c.svc.ResolvePurchaseDownload(ctx, p.Subject, req.OrderNo)
+	download, err := c.svc.ResolvePurchaseDownload(ctx, p.Subject, req.OrderNo, req.AssetID)
 	if err != nil {
 		return nil, err
 	}
@@ -325,6 +325,9 @@ func deliveryView(delivery *service.DeliveryResult) v1.DeliveryView {
 		view.DownloadExpiresAt = delivery.DownloadExpiresAt.Format("2006-01-02T15:04:05Z07:00")
 	}
 	if delivery.Item != nil {
+		view.SiteKey = delivery.Item.SiteKey
+		view.ExternalID = delivery.Item.ExternalID
+		view.VariantID = delivery.Item.VariantID
 		view.Title = delivery.Item.TitleSnapshot
 		view.VariantTitle = delivery.Item.VariantTitleSnapshot
 		view.SKU = delivery.Item.SKUSnapshot

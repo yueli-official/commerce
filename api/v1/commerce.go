@@ -133,6 +133,9 @@ type CreatePointsCheckoutRes struct {
 type DeliveryView struct {
 	OrderNo           string               `json:"orderNo"`
 	BuyerEmail        string               `json:"buyerEmail,omitempty"`
+	SiteKey           string               `json:"siteKey,omitempty"`
+	ExternalID        string               `json:"externalId,omitempty"`
+	VariantID         string               `json:"variantId,omitempty"`
 	Title             string               `json:"title"`
 	VariantTitle      string               `json:"variantTitle,omitempty"`
 	SKU               string               `json:"sku,omitempty"`
@@ -197,6 +200,7 @@ type MyPurchaseByOrderRes struct {
 type MyPurchaseDownloadReq struct {
 	g.Meta  `path:"/api/v1/me/purchases/{orderNo}/download" method:"GET" tags:"Commerce Delivery" summary:"Create a download URL for current user's purchase"`
 	OrderNo string `p:"orderNo" v:"required"`
+	AssetID string `p:"assetId"`
 }
 
 // ─── GET /api/v1/payments/methods ─────────────────────────────────────────
