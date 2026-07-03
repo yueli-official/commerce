@@ -45,7 +45,7 @@ func (c *Notify) Handle(r *ghttp.Request) {
 		return
 	}
 
-	if err := c.svc.MarkPaid(r.Context(), out.OrderNo, out.ProviderTxID, out.AmountCents); err != nil {
+	if _, err := c.svc.SettleCheckout(r.Context(), out.OrderNo, c.provider, out.ProviderTxID, out.AmountCents); err != nil {
 		c.writeFail(r)
 		return
 	}

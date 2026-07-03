@@ -88,14 +88,12 @@ func Configure(s *ghttp.Server, d Deps) {
 	})
 
 	// ── Protected: JWT-required routes ──────────────────────────────────────
-	orderCtrl := controller.NewOrder(svc, d.Registry, d.NotifyURL, d.ReturnURL)
 	accessCtrl := controller.NewAccess(svc)
 	checkinCtrl := controller.NewCheckin(svc)
 	creditsCtrl := controller.NewCredits(svc)
 	adminOrderCtrl := controller.NewAdminOrder(svc, d.Registry)
 	s.Group("/", func(grp *ghttp.RouterGroup) {
 		grp.Middleware(ghttpx.Middleware, authjwt.Middleware(d.Verifier))
-		grp.Bind(orderCtrl)
 		grp.Bind(accessCtrl)
 		grp.Bind(checkinCtrl)
 		grp.Bind(creditsCtrl)

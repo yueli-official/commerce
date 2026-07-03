@@ -96,7 +96,7 @@ func TestGuestCheckoutCreatesBuyerOrderItemAndGrantOnSettle(t *testing.T) {
 		t.Fatalf("status = %q, want paying", order.Status)
 	}
 
-	grant, err := svc.SettleCheckout(ctx, order.OrderNo, "dev", "dev-tx", 1900)
+	grant, err := svc.SettleCheckout(ctx, order.OrderNo, "alipay", "dev-tx", 1900)
 	if err != nil {
 		t.Fatalf("SettleCheckout: %v", err)
 	}
@@ -352,7 +352,7 @@ func TestUserCheckoutGrantsEntitlementOnSettle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCheckout: %v", err)
 	}
-	if _, err := svc.SettleCheckout(ctx, order.OrderNo, "dev", "dev-tx-user", 3900); err != nil {
+	if _, err := svc.SettleCheckout(ctx, order.OrderNo, "alipay", "dev-tx-user", 3900); err != nil {
 		t.Fatalf("SettleCheckout: %v", err)
 	}
 	p, err := pg.GetProductByExternal(ctx, "shop", externalID)
@@ -492,7 +492,7 @@ func TestPurchasesListsLoggedInDeliveryGrants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCheckout: %v", err)
 	}
-	if _, err := svc.SettleCheckout(ctx, order.OrderNo, "dev", "dev-library", 1200); err != nil {
+	if _, err := svc.SettleCheckout(ctx, order.OrderNo, "alipay", "dev-library", 1200); err != nil {
 		t.Fatalf("SettleCheckout: %v", err)
 	}
 	purchases, total, err := svc.Purchases(ctx, service.PurchaseFilter{Sub: sub}, 10, 0)
@@ -536,7 +536,7 @@ func TestResolvePurchaseDownloadSelectsAssetFromBundle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCheckout: %v", err)
 	}
-	if _, err := svc.SettleCheckout(ctx, order.OrderNo, "dev", "dev-bundle", 1200); err != nil {
+	if _, err := svc.SettleCheckout(ctx, order.OrderNo, "alipay", "dev-bundle", 1200); err != nil {
 		t.Fatalf("SettleCheckout: %v", err)
 	}
 	download, err := svc.ResolvePurchaseDownload(ctx, sub, order.OrderNo, "asset-b")
@@ -580,7 +580,7 @@ func TestResolvePurchaseDownloadDoesNotConsumeDownloadLimitWhenAssetSigningFails
 	if err != nil {
 		t.Fatalf("CreateCheckout: %v", err)
 	}
-	if _, err := svc.SettleCheckout(ctx, order.OrderNo, "dev", "dev-download-retry", 1200); err != nil {
+	if _, err := svc.SettleCheckout(ctx, order.OrderNo, "alipay", "dev-download-retry", 1200); err != nil {
 		t.Fatalf("SettleCheckout: %v", err)
 	}
 	if _, err := svc.ResolvePurchaseDownload(ctx, sub, order.OrderNo, "asset-retry"); err == nil {

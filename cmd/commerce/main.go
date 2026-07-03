@@ -53,6 +53,10 @@ func main() {
 
 	notifyURL := alipayCfg.NotifyURL
 	returnURL := alipayCfg.ReturnURL
+	currentDelivery := appconfig.BuildCurrentDeliveryResolver(ctx)
+	if currentDelivery == nil {
+		log.Fatal("FATAL: commerce.shopService.base_url is required. Commerce checkout must resolve authoritative product snapshots from shop service.")
+	}
 
 	db := dao.NewPG(g.DB())
 	s := g.Server()
@@ -67,7 +71,7 @@ func main() {
 		Delivery:        appconfig.LoadDelivery(ctx),
 		Mailer:          appconfig.BuildDeliveryMailer(ctx),
 		Asset:           appconfig.BuildAssetDeliveryClient(ctx),
-		CurrentDelivery: appconfig.BuildCurrentDeliveryResolver(ctx),
+		CurrentDelivery: currentDelivery,
 	})
 	g.Log().Info(ctx, "commerce-service starting")
 	s.Run()

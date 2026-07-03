@@ -356,14 +356,15 @@ func (s *Service) CreateOrder(ctx context.Context, sub string, desc OrderDesc) (
 }
 
 func (s *Service) CreateCheckout(ctx context.Context, desc CheckoutDesc) (*model.Order, error) {
-	buyer, err := s.resolveBuyer(ctx, desc)
-	if err != nil {
-		return nil, err
-	}
 	if err := validateCheckoutItems(desc.Items); err != nil {
 		return nil, err
 	}
+	var err error
 	desc.Items, err = s.authoritativeCheckoutItems(ctx, desc.Items)
+	if err != nil {
+		return nil, err
+	}
+	buyer, err := s.resolveBuyer(ctx, desc)
 	if err != nil {
 		return nil, err
 	}
@@ -460,14 +461,15 @@ func (s *Service) RedeemCheckout(ctx context.Context, desc CheckoutDesc) (*Point
 		return nil, commerceerr.Forbidden()
 	}
 	desc.Provider = model.ProductKindPoints
-	buyer, err := s.resolveBuyer(ctx, desc)
-	if err != nil {
-		return nil, err
-	}
 	if err := validateCheckoutItems(desc.Items); err != nil {
 		return nil, err
 	}
+	var err error
 	desc.Items, err = s.authoritativeCheckoutItems(ctx, desc.Items)
+	if err != nil {
+		return nil, err
+	}
+	buyer, err := s.resolveBuyer(ctx, desc)
 	if err != nil {
 		return nil, err
 	}
@@ -588,14 +590,15 @@ func (s *Service) RedeemCheckout(ctx context.Context, desc CheckoutDesc) (*Point
 }
 
 func (s *Service) ClaimFreeCheckout(ctx context.Context, desc CheckoutDesc) (*FreeCheckoutResult, error) {
-	buyer, err := s.resolveBuyer(ctx, desc)
-	if err != nil {
-		return nil, err
-	}
 	if err := validateCheckoutItems(desc.Items); err != nil {
 		return nil, err
 	}
+	var err error
 	desc.Items, err = s.authoritativeCheckoutItems(ctx, desc.Items)
+	if err != nil {
+		return nil, err
+	}
+	buyer, err := s.resolveBuyer(ctx, desc)
 	if err != nil {
 		return nil, err
 	}
@@ -708,7 +711,7 @@ func validateCheckoutItems(items []CheckoutItemDesc) error {
 
 func (s *Service) authoritativeCheckoutItems(ctx context.Context, items []CheckoutItemDesc) ([]CheckoutItemDesc, error) {
 	if s.currentCheckout == nil {
-		return items, nil
+		return nil, commerceerr.InvalidRequest("checkout catalog resolver is required")
 	}
 	out := make([]CheckoutItemDesc, 0, len(items))
 	for _, item := range items {
@@ -781,6 +784,13 @@ func (s *Service) SettleCheckout(ctx context.Context, orderNo, provider, provide
 	}
 	if o.Status != model.OrderStatusPaying {
 		return nil, commerceerr.OrderInvalidState(o.Status, model.OrderStatusFulfilled)
+	}
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		provider = o.PaymentProvider
+	}
+	if strings.TrimSpace(o.PaymentProvider) != "" && provider != o.PaymentProvider {
+		return nil, commerceerr.InvalidRequest("payment provider mismatch")
 	}
 	if amountCents != o.AmountCents {
 		return nil, commerceerr.NotifyInvalid("amount mismatch")

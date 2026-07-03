@@ -99,6 +99,7 @@ func newSvc(t *testing.T) (*service.Service, *dao.PG, context.Context) {
 	resetSchema(t, db)
 	pg := dao.NewPG(db)
 	svc := service.New(pg, service.CheckinConfig{Base: 10, Step: 2, Cap: 30})
+	svc.ConfigureCurrentCheckoutItemResolver(serviceTestCheckoutResolver{})
 	return svc, pg, context.Background()
 }
 

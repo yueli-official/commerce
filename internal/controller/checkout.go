@@ -425,3 +425,11 @@ func notifyURLFor(provider, base string) string {
 	}
 	return ""
 }
+
+// cancelBestEffort cancels the order on a best-effort basis after payment
+// gateway/session failures. The original gateway error remains the response.
+func cancelBestEffort(ctx context.Context, svc *service.Service, orderNo string) {
+	if err := svc.CancelOrder(ctx, orderNo); err != nil {
+		g.Log().Errorf(ctx, "failed to cancel orphan order %s after gateway failure: %+v", orderNo, err)
+	}
+}

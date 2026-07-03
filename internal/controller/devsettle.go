@@ -22,23 +22,15 @@ func NewDevSettle(svc *service.Service) *DevSettle {
 
 // Settle handles POST /dev/orders/{orderNo}/settle.
 func (c *DevSettle) Settle(ctx context.Context, req *v1.DevSettleReq) (*v1.DevSettleRes, error) {
-	// Load the order to get its amount for the MarkPaid call.
-	// We use the service's DAO indirectly via a sentinel provider TX ID.
-	// MarkPaid guards against the wrong amount, so we load the order first
-	// to pass the correct amount (which matches what was recorded at order time).
+	// Load the order to pass the recorded amount into the same checkout
+	// settlement path used by provider notifications.
 	o, err := c.svc.GetOrderByNo(ctx, req.OrderNo)
 	if err != nil {
 		return nil, err
 	}
-	if o.BuyerID != "" || o.BuyerEmail != "" {
-		grant, err := c.svc.SettleCheckout(ctx, req.OrderNo, "dev", "DEV-SETTLE-"+req.OrderNo, o.AmountCents)
-		if err != nil {
-			return nil, err
-		}
-		return &v1.DevSettleRes{Token: grant.Token, DeliveryRef: grant.DeliveryRef}, nil
-	}
-	if err := c.svc.MarkPaid(ctx, req.OrderNo, "DEV-SETTLE-"+req.OrderNo, o.AmountCents); err != nil {
+	grant, err := c.svc.SettleCheckout(ctx, req.OrderNo, o.PaymentProvider, "DEV-SETTLE-"+req.OrderNo, o.AmountCents)
+	if err != nil {
 		return nil, err
 	}
-	return &v1.DevSettleRes{}, nil
+	return &v1.DevSettleRes{Token: grant.Token, DeliveryRef: grant.DeliveryRef}, nil
 }

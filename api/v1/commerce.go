@@ -5,31 +5,6 @@ package v1
 
 import "github.com/gogf/gf/v2/frame/g"
 
-// ─── POST /api/v1/orders ────────────────────────────────────────────────────
-
-// CreateOrderReq is the request body for CreateOrder. A `paid` order is priced in
-// priceCents (+ currency); a `points` order is priced in pointsCost. The per-kind
-// required fields are validated in the handler.
-type CreateOrderReq struct {
-	g.Meta     `path:"/api/v1/orders" method:"POST" tags:"Commerce" summary:"Create a paid order (payUrl) or redeem points (entitled)"`
-	SiteKey    string `json:"siteKey"     v:"required|length:1,128"`
-	ExternalID string `json:"externalId"  v:"required|length:1,128"`
-	Kind       string `json:"kind"        v:"required|in:paid,points"`
-	PriceCents int    `json:"priceCents"`
-	PointsCost int    `json:"pointsCost"`
-	Title      string `json:"title"       v:"required|length:1,200"`
-	Currency   string `json:"currency"`
-}
-
-// CreateOrderRes is the response body for CreateOrder. paid → orderNo + payUrl;
-// points → entitled (redeemed synchronously) + the remaining balance.
-type CreateOrderRes struct {
-	OrderNo  string `json:"orderNo,omitempty"`
-	PayURL   string `json:"payUrl,omitempty"`
-	Entitled bool   `json:"entitled"`
-	Balance  *int   `json:"balance,omitempty"`
-}
-
 // ─── POST /api/v1/checkouts ────────────────────────────────────────────────
 
 type CheckoutItemReq struct {

@@ -64,6 +64,43 @@ type fakeGateway struct {
 	queryCalls  []paykit.QueryPaymentIn
 }
 
+type testCheckoutResolver struct{}
+
+func (testCheckoutResolver) CurrentCheckoutItem(_ context.Context, in service.CurrentCheckoutItemInput) (service.CurrentCheckoutItemResult, error) {
+	out := service.CurrentCheckoutItemResult{
+		SiteKey:      in.SiteKey,
+		ExternalID:   in.ExternalID,
+		VariantID:    in.VariantID,
+		Title:        "Test Article",
+		VariantTitle: "Basic",
+		SKU:          "TEST-BASIC",
+		PriceCents:   9900,
+		Currency:     "CNY",
+		DeliveryKind: "asset_file",
+		DeliveryRef:  "asset-" + in.ExternalID,
+	}
+	switch in.ExternalID {
+	case "sync-checkout-001":
+		out.Title = "Sync Checkout"
+		out.PriceCents = 100
+		out.DeliveryKind = "netdisk"
+		out.DeliveryRef = `{"netdisk":{"provider":"manual","url":"https://example.test/download"}}`
+	case "pts-1":
+		out.Title = "Points Resource"
+		out.PriceCents = 0
+		out.PointsCost = 5
+		out.Currency = "POINTS"
+		out.PurchaseLimitPerBuyer = 1
+	case "pts-2":
+		out.Title = "Too Pricey"
+		out.PriceCents = 0
+		out.PointsCost = 9999
+		out.Currency = "POINTS"
+		out.PurchaseLimitPerBuyer = 1
+	}
+	return out, nil
+}
+
 // failingGateway always returns an error from CreatePayment, simulating a
 // gateway outage.  Used to test the order-cancel-on-failure path.
 type failingGateway struct{}
@@ -180,13 +217,14 @@ func newTestServerWithGW(t *gtest.T, db *dao.PG, gw paykit.Provider, v *authjwt.
 	s := g.Server(name)
 	s.SetAddr("127.0.0.1:0")
 	server.Configure(s, server.Deps{
-		Verifier:  v,
-		DB:        db,
-		Registry:  reg,
-		NotifyURL: "http://localhost:8084/api/v1/payments/alipay/notify",
-		ReturnURL: "http://localhost:3000/pay/return",
-		DevSettle: devSettle,
-		Checkin:   service.CheckinConfig{Base: 10, Step: 2, Cap: 30},
+		Verifier:        v,
+		DB:              db,
+		Registry:        reg,
+		NotifyURL:       "http://localhost:8084/api/v1/payments/alipay/notify",
+		ReturnURL:       "http://localhost:3000/pay/return",
+		DevSettle:       devSettle,
+		Checkin:         service.CheckinConfig{Base: 10, Step: 2, Cap: 30},
+		CurrentCheckout: testCheckoutResolver{},
 	})
 	s.SetDumpRouterMap(false)
 	s.Start()
@@ -195,6 +233,29 @@ func newTestServerWithGW(t *gtest.T, db *dao.PG, gw paykit.Provider, v *authjwt.
 
 func prefix(s *ghttp.Server) string {
 	return fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort())
+}
+
+func TestLegacyOrdersRouteRemoved(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		priv, err := rsa.GenerateKey(rand.Reader, 2048)
+		t.AssertNil(err)
+		v := mustVerifier(t, priv)
+
+		serverSeq++
+		s := g.Server(fmt.Sprintf("%s-legacy-orders-%d", t.Name(), serverSeq))
+		s.SetAddr("127.0.0.1:0")
+		server.Configure(s, server.Deps{Verifier: v})
+		s.SetDumpRouterMap(false)
+		s.Start()
+		defer s.Shutdown()
+
+		c := g.Client()
+		c.SetPrefix(prefix(s))
+		resp, err := c.Post(context.Background(), "/api/v1/orders", `{"siteKey":"shop"}`)
+		t.AssertNil(err)
+		defer resp.Close()
+		t.Assert(resp.StatusCode, 404)
+	})
 }
 
 // pgSetup creates the commerce DB + schema fresh.
@@ -277,7 +338,7 @@ func TestCommerceHTTP(t *testing.T) {
 		defer s.Shutdown()
 		base := prefix(s)
 
-		// ── 1. No auth → 401 + common.unauthorized ────────────────────────────
+		// ── 1. Legacy order route is removed ──────────────────────────────────
 		c := g.Client()
 		c.SetPrefix(base)
 		rawResp, err := c.Post(ctx, "/api/v1/orders", `{
@@ -286,23 +347,23 @@ func TestCommerceHTTP(t *testing.T) {
 		}`)
 		t.AssertNil(err)
 		defer rawResp.Close()
-		t.Assert(rawResp.StatusCode, 401)
-		j := gjson.New(rawResp.ReadAllString())
-		// authjwt.Middleware writes a 401 with "common.unauthorized" (before our handler)
-		t.Assert(j.Get("code").String(), "common.unauthorized")
+		t.Assert(rawResp.StatusCode, 404)
 
-		// ── 2. CreateOrder with valid JWT → 200 + orderNo + payUrl ───────────
+		// ── 2. CreateCheckout with valid JWT → 200 + orderNo + payUrl ─────────
 		authC := g.Client()
 		authC.SetPrefix(base)
 		authC.SetHeader("Authorization", "Bearer "+aliceToken)
 		authC.SetHeader("Content-Type", "application/json")
 
 		createBody := fmt.Sprintf(`{
-			"siteKey":%q,"externalId":%q,"kind":"paid",
-			"priceCents":9900,"title":"Test Article","currency":"CNY"
+			"provider":"alipay",
+			"items":[{
+				"siteKey":%q,"externalId":%q,"variantId":"basic",
+				"priceCents":1,"title":"Tampered Title","currency":"USD","quantity":1
+			}]
 		}`, fakeSiteKey, fakeExtID)
 
-		createResp, err := authC.Post(ctx, "/api/v1/orders", createBody)
+		createResp, err := authC.Post(ctx, "/api/v1/checkouts", createBody)
 		t.AssertNil(err)
 		defer createResp.Close()
 		t.Assert(createResp.StatusCode, 200)
@@ -347,10 +408,13 @@ func TestCommerceHTTP(t *testing.T) {
 		// Create a second order for a fresh product to test notify idempotency.
 		notifyExtID := "res-notify-idem-001"
 		createBody2 := fmt.Sprintf(`{
-			"siteKey":%q,"externalId":%q,"kind":"paid",
-			"priceCents":9900,"title":"Notify Test","currency":"CNY"
+			"provider":"alipay",
+			"items":[{
+				"siteKey":%q,"externalId":%q,"variantId":"basic",
+				"priceCents":1,"title":"Tampered Notify","currency":"USD","quantity":1
+			}]
 		}`, fakeSiteKey, notifyExtID)
-		createResp2, err := authC.Post(ctx, "/api/v1/orders", createBody2)
+		createResp2, err := authC.Post(ctx, "/api/v1/checkouts", createBody2)
 		t.AssertNil(err)
 		defer createResp2.Close()
 		t.Assert(createResp2.StatusCode, 200)
@@ -397,62 +461,6 @@ func TestCommerceHTTP(t *testing.T) {
 		t.AssertNil(err)
 		defer sr.Close()
 		t.Assert(sr.StatusCode, 404)
-	})
-}
-
-// TestCreateOrder_InputValidation verifies that over-long Title or non-CNY
-// currency returns 400 (not 502 or 200).
-func TestCreateOrder_InputValidation(t *testing.T) {
-	gtest.C(t, func(t *gtest.T) {
-		db := pgSetup(t)
-		ctx := context.Background()
-
-		priv, err := rsa.GenerateKey(rand.Reader, 2048)
-		t.AssertNil(err)
-		v := mustVerifier(t, priv)
-		aliceToken := signToken(t, priv, testSubAlice)
-
-		s := newTestServer(t, db, &fakeGateway{}, v, false)
-		defer s.Shutdown()
-		base := prefix(s)
-
-		authC := g.Client()
-		authC.SetPrefix(base)
-		authC.SetHeader("Authorization", "Bearer "+aliceToken)
-		authC.SetHeader("Content-Type", "application/json")
-
-		cases := []struct {
-			name string
-			body string
-		}{
-			{
-				name: "title too long (>200 chars)",
-				body: fmt.Sprintf(`{"siteKey":"resource","externalId":"val-001","kind":"paid","priceCents":100,"title":%q,"currency":"CNY"}`,
-					string(make([]byte, 201))),
-			},
-			{
-				name: "non-CNY currency",
-				body: `{"siteKey":"resource","externalId":"val-002","kind":"paid","priceCents":100,"title":"T","currency":"USD"}`,
-			},
-			{
-				name: "empty currency",
-				body: `{"siteKey":"resource","externalId":"val-003","kind":"paid","priceCents":100,"title":"T","currency":""}`,
-			},
-		}
-
-		for _, tc := range cases {
-			tc := tc
-			t.T.Run(tc.name, func(tt *testing.T) {
-				resp, err := authC.Post(ctx, "/api/v1/orders", tc.body)
-				if err != nil {
-					tt.Fatalf("POST: %v", err)
-				}
-				defer resp.Close()
-				if resp.StatusCode != 400 {
-					tt.Errorf("status = %d, want 400 for %q", resp.StatusCode, tc.name)
-				}
-			})
-		}
 	})
 }
 
@@ -514,10 +522,10 @@ func TestCheckoutSyncPaymentQuerySettlesOrder(t *testing.T) {
 	})
 }
 
-// TestCreateOrder_GatewayFailure_OrderCancelled verifies that when the payment
-// gateway's CreatePayment returns an error, the pending order is transitioned
-// to "cancelled" rather than left as an orphan.
-func TestCreateOrder_GatewayFailure_OrderCancelled(t *testing.T) {
+// TestCreateCheckout_GatewayFailure_OrderCancelled verifies that when the
+// payment gateway's CreatePayment returns an error, the pending order is
+// transitioned to "cancelled" rather than left as an orphan.
+func TestCreateCheckout_GatewayFailure_OrderCancelled(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
 		db := pgSetup(t)
 		ctx := context.Background()
@@ -537,8 +545,8 @@ func TestCreateOrder_GatewayFailure_OrderCancelled(t *testing.T) {
 		authC.SetHeader("Authorization", "Bearer "+aliceToken)
 		authC.SetHeader("Content-Type", "application/json")
 
-		createBody := `{"siteKey":"resource","externalId":"gw-fail-001","kind":"paid","priceCents":9900,"title":"Test","currency":"CNY"}`
-		resp, err := authC.Post(ctx, "/api/v1/orders", createBody)
+		createBody := `{"provider":"alipay","items":[{"siteKey":"resource","externalId":"gw-fail-001","variantId":"basic","priceCents":1,"title":"Tampered","currency":"USD","quantity":1}]}`
+		resp, err := authC.Post(ctx, "/api/v1/checkouts", createBody)
 		t.AssertNil(err)
 		defer resp.Close()
 
@@ -634,14 +642,13 @@ func TestCommerceM2_CheckinAndPoints(t *testing.T) {
 		t.Assert(jled.Get("data.entries.0.delta").Int(), 10)
 		t.Assert(jled.Get("data.entries.0.source").String(), "checkin")
 
-		// ── 5. Points redeem (cost 5 ≤ balance 10) → entitled, balance 5 ───────
-		redeemBody := `{"siteKey":"resource","externalId":"pts-1","kind":"points","pointsCost":5,"title":"Points Resource"}`
-		rd, err := authC.Post(ctx, "/api/v1/orders", redeemBody)
+		// ── 5. Points checkout (cost 5 ≤ balance 10) → grant, balance 5 ────────
+		redeemBody := `{"items":[{"siteKey":"resource","externalId":"pts-1","variantId":"points-basic","pointsCost":999,"title":"Tampered Points Resource","quantity":1}]}`
+		rd, err := authC.Post(ctx, "/api/v1/checkouts/points", redeemBody)
 		t.AssertNil(err)
 		jrd := gjson.New(rd.ReadAllString())
 		rd.Close()
 		t.Assert(jrd.Get("code").String(), "ok")
-		t.Assert(jrd.Get("data.entitled").Bool(), true)
 		t.Assert(jrd.Get("data.balance").Int(), 5)
 
 		// access for the redeemed product → entitled
@@ -652,17 +659,16 @@ func TestCommerceM2_CheckinAndPoints(t *testing.T) {
 		t.Assert(jacc.Get("data.entitled").Bool(), true)
 		t.Assert(jacc.Get("data.reason").String(), "ok")
 
-		// ── 6. Redeem again (idempotent) → still entitled, balance unchanged ───
-		rd2, err := authC.Post(ctx, "/api/v1/orders", redeemBody)
+		// ── 6. Redeem again → blocked by catalog purchase limit ───────────────
+		rd2, err := authC.Post(ctx, "/api/v1/checkouts/points", redeemBody)
 		t.AssertNil(err)
 		jrd2 := gjson.New(rd2.ReadAllString())
 		rd2.Close()
-		t.Assert(jrd2.Get("data.entitled").Bool(), true)
-		t.Assert(jrd2.Get("data.balance").Int(), 5) // no double-spend
+		t.Assert(jrd2.Get("code").String(), "commerce.notify_invalid")
 
 		// ── 7. Unaffordable redeem → 402 insufficient_points, balance unchanged
-		bigBody := `{"siteKey":"resource","externalId":"pts-2","kind":"points","pointsCost":9999,"title":"Too Pricey"}`
-		rdx, err := authC.Post(ctx, "/api/v1/orders", bigBody)
+		bigBody := `{"items":[{"siteKey":"resource","externalId":"pts-2","variantId":"points-expensive","pointsCost":1,"title":"Tampered Expensive","quantity":1}]}`
+		rdx, err := authC.Post(ctx, "/api/v1/checkouts/points", bigBody)
 		t.AssertNil(err)
 		jrdx := gjson.New(rdx.ReadAllString())
 		t.Assert(rdx.StatusCode, 402)
