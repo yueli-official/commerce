@@ -88,7 +88,10 @@ func (s notificationDeliverySender) SendDelivery(ctx context.Context, in service
 			"deliveryUrl": in.DeliveryURL,
 		},
 	})
-	return err
+	if err != nil {
+		g.Log().Warningf(ctx, "delivery notification failed order=%s to=%s: %v", in.OrderNo, in.To, err)
+	}
+	return nil
 }
 
 type assetDeliveryAdapter struct {
