@@ -1,0 +1,3 @@
+ALTER TABLE delivery_grants
+    ADD COLUMN IF NOT EXISTS max_downloads INT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS download_count INT NOT NULL DEFAULT 0;

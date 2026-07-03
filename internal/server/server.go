@@ -27,10 +27,17 @@ type Deps struct {
 	Mailer          service.DeliveryMailer
 	Asset           service.AssetDeliveryClient
 	CurrentDelivery service.CurrentDeliveryResolver
+	CurrentCheckout service.CurrentCheckoutItemResolver
 }
 
 // Configure mounts the commerce-service routes onto s.
 func Configure(s *ghttp.Server, d Deps) {
+	currentCheckout := d.CurrentCheckout
+	if currentCheckout == nil && d.CurrentDelivery != nil {
+		if resolver, ok := d.CurrentDelivery.(service.CurrentCheckoutItemResolver); ok {
+			currentCheckout = resolver
+		}
+	}
 	svc := service.New(
 		d.DB,
 		d.Checkin,
@@ -38,6 +45,7 @@ func Configure(s *ghttp.Server, d Deps) {
 		service.WithDeliveryMailer(d.Mailer),
 		service.WithAssetDeliveryClient(d.Asset),
 		service.WithCurrentDeliveryResolver(d.CurrentDelivery),
+		service.WithCurrentCheckoutItemResolver(currentCheckout),
 	)
 
 	// ── Public: liveness ────────────────────────────────────────────────────
@@ -71,7 +79,7 @@ func Configure(s *ghttp.Server, d Deps) {
 	// ── Public/optional-auth: virtual-goods checkout ─────────────────────────
 	// Guest buyers identify by email; logged-in buyers get their subject from an
 	// optional Bearer token injected by the app BFF.
-	checkoutCtrl := controller.NewCheckout(svc, d.Registry, d.NotifyURL)
+	checkoutCtrl := controller.NewCheckout(svc, d.Registry, d.NotifyURL, d.ReturnURL)
 	paymentConfigCtrl := controller.NewPaymentConfig(svc, d.Registry)
 	s.Group("/", func(grp *ghttp.RouterGroup) {
 		grp.Middleware(ghttpx.Middleware, authjwt.OptionalMiddleware(d.Verifier))

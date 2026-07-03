@@ -20,10 +20,18 @@ type Checkout struct {
 	svc       *service.Service
 	registry  paykit.Registry
 	notifyURL string
+	returnURL string
 }
 
-func NewCheckout(svc *service.Service, reg paykit.Registry, notifyURL string) *Checkout {
-	return &Checkout{svc: svc, registry: reg, notifyURL: notifyURL}
+func NewCheckout(svc *service.Service, reg paykit.Registry, notifyURL, returnURL string) *Checkout {
+	return &Checkout{svc: svc, registry: reg, notifyURL: notifyURL, returnURL: returnURL}
+}
+
+func defaultString(value, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
 }
 
 func (c *Checkout) CreateCheckout(ctx context.Context, req *v1.CreateCheckoutReq) (*v1.CreateCheckoutRes, error) {
@@ -42,7 +50,7 @@ func (c *Checkout) CreateCheckout(ctx context.Context, req *v1.CreateCheckoutReq
 	desc := service.CheckoutDesc{
 		BuyerEmail: strings.TrimSpace(req.BuyerEmail),
 		Provider:   provider,
-		ReturnURL:  req.ReturnURL,
+		ReturnURL:  defaultString(c.returnURL, req.ReturnURL),
 		CancelURL:  req.CancelURL,
 		Items:      make([]service.CheckoutItemDesc, 0, len(req.Items)),
 	}
@@ -55,14 +63,15 @@ func (c *Checkout) CreateCheckout(ctx context.Context, req *v1.CreateCheckoutReq
 	if err != nil {
 		return nil, err
 	}
+	subject := checkoutSubjectFromOrder(ctx, c.svc, order)
 
 	payment, err := gw.CreatePayment(ctx, paykit.CreatePaymentIn{
 		OrderNo:     order.OrderNo,
-		Subject:     checkoutSubject(req.Items),
+		Subject:     subject,
 		AmountCents: order.AmountCents,
 		Currency:    order.Currency,
 		NotifyURL:   notifyURLFor(provider, c.notifyURL),
-		ReturnURL:   req.ReturnURL,
+		ReturnURL:   defaultString(c.returnURL, req.ReturnURL),
 	})
 	if err != nil {
 		g.Log().Errorf(ctx, "checkout CreatePayment failed for order %s provider %s: %+v", order.OrderNo, provider, err)
@@ -99,6 +108,24 @@ func (c *Checkout) CreatePointsCheckout(ctx context.Context, req *v1.CreatePoint
 	return &v1.CreatePointsCheckoutRes{
 		OrderNo: res.Order.OrderNo, Token: res.Grant.Token, DeliveryRef: res.Grant.DeliveryRef,
 		State: res.Grant.State, Balance: int(res.Balance),
+	}, nil
+}
+
+func (c *Checkout) CreateFreeCheckout(ctx context.Context, req *v1.CreateFreeCheckoutReq) (*v1.CreateFreeCheckoutRes, error) {
+	var buyerSub string
+	if p, ok := authjwt.From(ctx); ok && p != nil {
+		buyerSub = p.Subject
+	}
+	res, err := c.svc.ClaimFreeCheckout(ctx, service.CheckoutDesc{
+		BuyerSub: buyerSub, BuyerEmail: strings.TrimSpace(req.BuyerEmail), Provider: model.ProductKindFree,
+		Items: checkoutItems(req.Items),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &v1.CreateFreeCheckoutRes{
+		OrderNo: res.Order.OrderNo, Token: res.Grant.Token, DeliveryRef: res.Grant.DeliveryRef,
+		State: res.Grant.State,
 	}, nil
 }
 
@@ -261,11 +288,13 @@ func (c *Checkout) MyPurchases(ctx context.Context, req *v1.MyPurchasesReq) (*v1
 	if !ok || p == nil {
 		return nil, commerceerr.Forbidden()
 	}
-	deliveries, err := c.svc.Purchases(ctx, p.Subject, req.Limit, req.Offset)
+	deliveries, total, err := c.svc.Purchases(ctx, service.PurchaseFilter{
+		Sub: p.Subject, Q: req.Q, State: req.State,
+	}, req.Limit, req.Offset)
 	if err != nil {
 		return nil, err
 	}
-	res := &v1.MyPurchasesRes{Purchases: make([]v1.DeliveryView, 0, len(deliveries))}
+	res := &v1.MyPurchasesRes{Purchases: make([]v1.DeliveryView, 0, len(deliveries)), Total: total}
 	for _, delivery := range deliveries {
 		res.Purchases = append(res.Purchases, deliveryView(delivery))
 	}
@@ -365,17 +394,29 @@ func checkoutStatusRes(status *service.CheckoutStatusResult) *v1.CheckoutStatusR
 	return res
 }
 
-func checkoutSubject(items []v1.CheckoutItemReq) string {
-	if len(items) == 0 {
+func checkoutSubjectFromOrder(ctx context.Context, svc *service.Service, order *model.Order) string {
+	if svc == nil || order == nil {
 		return "Virtual goods checkout"
 	}
-	if len(items) == 1 {
-		if items[0].VariantTitle != "" {
-			return items[0].Title + " - " + items[0].VariantTitle
-		}
-		return items[0].Title
+	detail, err := svc.OrderDetail(ctx, order.OrderNo)
+	if err != nil || detail == nil || len(detail.Items) == 0 {
+		return "订单 " + order.OrderNo
 	}
-	return items[0].Title + " and more"
+	if len(detail.Items) == 1 {
+		item := detail.Items[0]
+		if strings.TrimSpace(item.VariantTitleSnapshot) != "" {
+			return strings.TrimSpace(item.TitleSnapshot) + " - " + strings.TrimSpace(item.VariantTitleSnapshot)
+		}
+		if strings.TrimSpace(item.TitleSnapshot) != "" {
+			return strings.TrimSpace(item.TitleSnapshot)
+		}
+		return "订单 " + order.OrderNo
+	}
+	title := strings.TrimSpace(detail.Items[0].TitleSnapshot)
+	if title == "" {
+		title = "订单 " + order.OrderNo
+	}
+	return title + " and more"
 }
 
 func notifyURLFor(provider, base string) string {

@@ -24,11 +24,11 @@ func (c *AdminOrder) ListOrders(ctx context.Context, req *v1.AdminListOrdersReq)
 	if err := requireAdmin(ctx); err != nil {
 		return nil, err
 	}
-	orders, err := c.svc.ListOrders(ctx, req.Status, req.Q, req.Limit, req.Offset)
+	orders, total, err := c.svc.ListOrders(ctx, req.Status, req.Q, req.Limit, req.Offset)
 	if err != nil {
 		return nil, err
 	}
-	res := &v1.AdminListOrdersRes{Orders: make([]v1.AdminOrderView, 0, len(orders))}
+	res := &v1.AdminListOrdersRes{Orders: make([]v1.AdminOrderView, 0, len(orders)), Total: total}
 	for _, order := range orders {
 		items, err := c.svc.OrderItems(ctx, order.ID)
 		if err != nil {

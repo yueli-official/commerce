@@ -4,6 +4,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"platform/gokit/authjwt"
@@ -72,7 +73,7 @@ func (c *Order) CreateOrder(ctx context.Context, req *v1.CreateOrderReq) (*v1.Cr
 		return nil, commerceerr.InvalidRequest("currency must be CNY")
 	}
 
-	order, _, err := c.svc.CreateOrder(ctx, sub, desc)
+	order, product, err := c.svc.CreateOrder(ctx, sub, desc)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +87,7 @@ func (c *Order) CreateOrder(ctx context.Context, req *v1.CreateOrderReq) (*v1.Cr
 
 	payment, err := gw.CreatePayment(ctx, paykit.CreatePaymentIn{
 		OrderNo:     order.OrderNo,
-		Subject:     req.Title,
+		Subject:     legacyOrderSubject(product, order),
 		AmountCents: order.AmountCents,
 		Currency:    order.Currency,
 		NotifyURL:   c.notifyURL,
@@ -108,6 +109,16 @@ func (c *Order) CreateOrder(ctx context.Context, req *v1.CreateOrderReq) (*v1.Cr
 		OrderNo: order.OrderNo,
 		PayURL:  payment.PayURL,
 	}, nil
+}
+
+func legacyOrderSubject(product *model.Product, order *model.Order) string {
+	if product != nil && strings.TrimSpace(product.Title) != "" {
+		return strings.TrimSpace(product.Title)
+	}
+	if order != nil {
+		return "订单 " + order.OrderNo
+	}
+	return "Virtual goods order"
 }
 
 // cancelBestEffort cancels the order on a best-effort basis (gateway failure path).

@@ -109,6 +109,29 @@ func (a currentDeliveryAdapter) CurrentDelivery(ctx context.Context, in service.
 	return service.CurrentDeliveryResult{DeliveryKind: out.DeliveryKind, DeliveryRef: out.DeliveryRef}, nil
 }
 
+func (a currentDeliveryAdapter) CurrentCheckoutItem(ctx context.Context, in service.CurrentCheckoutItemInput) (service.CurrentCheckoutItemResult, error) {
+	out, err := a.client.CurrentCheckoutItem(ctx, shopclient.CurrentDeliveryInput{
+		SiteKey: in.SiteKey, ExternalID: in.ExternalID, VariantID: in.VariantID,
+	})
+	if err != nil {
+		return service.CurrentCheckoutItemResult{}, err
+	}
+	return service.CurrentCheckoutItemResult{
+		SiteKey:               out.SiteKey,
+		ExternalID:            out.ExternalID,
+		VariantID:             out.VariantID,
+		Title:                 out.Title,
+		VariantTitle:          out.VariantTitle,
+		SKU:                   out.SKU,
+		PriceCents:            out.PriceCents,
+		PointsCost:            out.PointsCost,
+		Currency:              out.Currency,
+		DeliveryKind:          out.DeliveryKind,
+		DeliveryRef:           out.DeliveryRef,
+		PurchaseLimitPerBuyer: out.PurchaseLimitPerBuyer,
+	}, nil
+}
+
 func BuildCurrentDeliveryResolver(ctx context.Context) service.CurrentDeliveryResolver {
 	cfg := shopclient.Config{
 		BaseURL: g.Cfg().MustGet(ctx, "commerce.shopService.base_url").String(),

@@ -26,12 +26,14 @@ const (
 const (
 	ProductKindPaid   = "paid"
 	ProductKindPoints = "points"
+	ProductKindFree   = "free"
 )
 
 // Entitlement source constants.
 const (
 	EntitlementSourceOrder  = "order"  // paid purchase
 	EntitlementSourcePoints = "points" // points redemption
+	EntitlementSourceFree   = "free"   // zero-price checkout
 	EntitlementSourceGrant  = "grant"  // admin/activity grant
 )
 
@@ -170,17 +172,19 @@ type PaymentEvent struct {
 }
 
 type DeliveryGrant struct {
-	ID          string     `json:"id"          orm:"id"`
-	OrderID     string     `json:"orderId"     orm:"order_id"`
-	OrderItemID string     `json:"orderItemId" orm:"order_item_id"`
-	BuyerSub    string     `json:"buyerSub"    orm:"buyer_sub"`
-	BuyerEmail  string     `json:"buyerEmail"  orm:"buyer_email"`
-	TokenHash   string     `json:"tokenHash"   orm:"token_hash"`
-	DeliveryRef string     `json:"deliveryRef" orm:"delivery_ref"`
-	State       string     `json:"state"       orm:"state"`
-	CreatedAt   time.Time  `json:"createdAt"   orm:"created_at"`
-	ExpiresAt   *time.Time `json:"expiresAt"   orm:"expires_at"`
-	RevokedAt   *time.Time `json:"revokedAt"   orm:"revoked_at"`
+	ID            string     `json:"id"          orm:"id"`
+	OrderID       string     `json:"orderId"     orm:"order_id"`
+	OrderItemID   string     `json:"orderItemId" orm:"order_item_id"`
+	BuyerSub      string     `json:"buyerSub"    orm:"buyer_sub"`
+	BuyerEmail    string     `json:"buyerEmail"  orm:"buyer_email"`
+	TokenHash     string     `json:"tokenHash"   orm:"token_hash"`
+	DeliveryRef   string     `json:"deliveryRef" orm:"delivery_ref"`
+	State         string     `json:"state"       orm:"state"`
+	MaxDownloads  int        `json:"maxDownloads"  orm:"max_downloads"`
+	DownloadCount int        `json:"downloadCount" orm:"download_count"`
+	CreatedAt     time.Time  `json:"createdAt"   orm:"created_at"`
+	ExpiresAt     *time.Time `json:"expiresAt"   orm:"expires_at"`
+	RevokedAt     *time.Time `json:"revokedAt"   orm:"revoked_at"`
 }
 
 type PaymentMethod struct {

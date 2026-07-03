@@ -130,6 +130,19 @@ type CreatePointsCheckoutRes struct {
 	Balance     int    `json:"balance"`
 }
 
+type CreateFreeCheckoutReq struct {
+	g.Meta     `path:"/api/v1/checkouts/free" method:"POST" tags:"Commerce Checkout" summary:"Claim a zero-price virtual-goods checkout"`
+	BuyerEmail string            `json:"buyerEmail"`
+	Items      []CheckoutItemReq `json:"items" v:"required"`
+}
+
+type CreateFreeCheckoutRes struct {
+	OrderNo     string `json:"orderNo"`
+	Token       string `json:"token,omitempty"`
+	DeliveryRef string `json:"deliveryRef,omitempty"`
+	State       string `json:"state"`
+}
+
 type DeliveryView struct {
 	OrderNo           string               `json:"orderNo"`
 	BuyerEmail        string               `json:"buyerEmail,omitempty"`
@@ -180,12 +193,15 @@ type DeliveryDownloadRes struct {
 
 type MyPurchasesReq struct {
 	g.Meta `path:"/api/v1/me/purchases" method:"GET" tags:"Commerce Delivery" summary:"List current user's virtual purchases"`
-	Limit  int `p:"limit"`
-	Offset int `p:"offset"`
+	Q      string `p:"q"`
+	State  string `p:"state"`
+	Limit  int    `p:"limit"`
+	Offset int    `p:"offset"`
 }
 
 type MyPurchasesRes struct {
 	Purchases []DeliveryView `json:"purchases"`
+	Total     int            `json:"total"`
 }
 
 type MyPurchaseByOrderReq struct {
@@ -311,6 +327,7 @@ type AdminListOrdersReq struct {
 
 type AdminListOrdersRes struct {
 	Orders []AdminOrderView `json:"orders"`
+	Total  int              `json:"total"`
 }
 
 type AdminOrderDetailReq struct {

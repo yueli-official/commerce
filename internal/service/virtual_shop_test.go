@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"strings"
 	"testing"
@@ -13,6 +14,8 @@ import (
 	"platform/services/commerce/internal/model"
 	"platform/services/commerce/internal/service"
 )
+
+var errAssetSigningUnavailable = errors.New("asset signing unavailable")
 
 func assertTable(t *testing.T, db gdb.DB, table string) {
 	t.Helper()
@@ -155,12 +158,79 @@ func TestGuestCheckoutReusesRecentPayingOrder(t *testing.T) {
 	if second.OrderNo != first.OrderNo {
 		t.Fatalf("second orderNo = %q, want reused %q", second.OrderNo, first.OrderNo)
 	}
-	orders, err := pg.ListOrders(ctx, model.OrderStatusPaying, "reuse@example.com", 10, 0)
+	orders, total, err := pg.ListOrders(ctx, model.OrderStatusPaying, "reuse@example.com", 10, 0)
 	if err != nil {
 		t.Fatalf("ListOrders: %v", err)
 	}
 	if len(orders) != 1 {
 		t.Fatalf("paying orders = %d, want 1", len(orders))
+	}
+	if total != 1 {
+		t.Fatalf("paying order total = %d, want 1", total)
+	}
+}
+
+func TestCheckoutUsesAuthoritativeCatalogSnapshotWhenResolverConfigured(t *testing.T) {
+	svc, pg, ctx := newSvc(t)
+	externalID := uid("product-authoritative")
+	variantID := uid("variant-authoritative")
+	svc.ConfigureCurrentCheckoutItemResolver(staticCheckoutItemResolver{
+		out: service.CurrentCheckoutItemResult{
+			SiteKey:               "shop",
+			ExternalID:            externalID,
+			VariantID:             variantID,
+			Title:                 "Authoritative Pack",
+			VariantTitle:          "Standard",
+			SKU:                   "AUTH-STD",
+			PriceCents:            4900,
+			PointsCost:            30,
+			Currency:              "CNY",
+			DeliveryKind:          "bundle",
+			DeliveryRef:           `{"access":{"maxDownloads":1},"items":[{"kind":"asset_file","assetId":"asset-real","enabled":true}]}`,
+			PurchaseLimitPerBuyer: 1,
+		},
+	})
+
+	order, err := svc.CreateCheckout(ctx, service.CheckoutDesc{
+		BuyerEmail: "tamper@example.com",
+		Provider:   "alipay",
+		Items: []service.CheckoutItemDesc{{
+			SiteKey:               "shop",
+			ExternalID:            externalID,
+			VariantID:             variantID,
+			Title:                 "Tampered Pack",
+			VariantTitle:          "Hacked",
+			SKU:                   "HACKED",
+			PriceCents:            1,
+			Currency:              "CNY",
+			DeliveryKind:          "asset_file",
+			DeliveryRef:           "asset-tampered",
+			PurchaseLimitPerBuyer: 0,
+			Quantity:              1,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckout: %v", err)
+	}
+	if order.AmountCents != 4900 {
+		t.Fatalf("amount cents = %d, want authoritative 4900", order.AmountCents)
+	}
+	items, err := pg.OrderItems(ctx, order.ID)
+	if err != nil {
+		t.Fatalf("OrderItems: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(items))
+	}
+	item := items[0]
+	if item.TitleSnapshot != "Authoritative Pack" || item.SKUSnapshot != "AUTH-STD" {
+		t.Fatalf("item snapshot = %+v, want authoritative title/sku", item)
+	}
+	if item.UnitPriceCents != 4900 || item.DeliveryKindSnapshot != "bundle" || !strings.Contains(item.DeliveryRefSnapshot, "asset-real") {
+		t.Fatalf("price/delivery snapshot = %+v, want authoritative snapshot", item)
+	}
+	if !strings.Contains(item.DeliveryRefSnapshot, `"maxDownloads":1`) {
+		t.Fatalf("delivery access missing in snapshot: %s", item.DeliveryRefSnapshot)
 	}
 }
 
@@ -425,12 +495,15 @@ func TestPurchasesListsLoggedInDeliveryGrants(t *testing.T) {
 	if _, err := svc.SettleCheckout(ctx, order.OrderNo, "dev", "dev-library", 1200); err != nil {
 		t.Fatalf("SettleCheckout: %v", err)
 	}
-	purchases, err := svc.Purchases(ctx, sub, 10, 0)
+	purchases, total, err := svc.Purchases(ctx, service.PurchaseFilter{Sub: sub}, 10, 0)
 	if err != nil {
 		t.Fatalf("Purchases: %v", err)
 	}
 	if len(purchases) != 1 {
 		t.Fatalf("purchases len = %d, want 1", len(purchases))
+	}
+	if total != 1 {
+		t.Fatalf("purchases total = %d, want 1", total)
 	}
 	if purchases[0].Item.SKUSnapshot != "LIB-STD" {
 		t.Fatalf("purchase sku = %q, want LIB-STD", purchases[0].Item.SKUSnapshot)
@@ -478,6 +551,47 @@ func TestResolvePurchaseDownloadSelectsAssetFromBundle(t *testing.T) {
 	}
 	if _, err := svc.ResolvePurchaseDownload(ctx, sub, order.OrderNo, "asset-missing"); err == nil {
 		t.Fatal("expected missing bundle asset to fail")
+	}
+}
+
+func TestResolvePurchaseDownloadDoesNotConsumeDownloadLimitWhenAssetSigningFails(t *testing.T) {
+	svc, _, ctx := newSvc(t)
+	assetDelivery := &flakyAssetDelivery{url: "https://asset.example/grants/retry-token"}
+	svc.ConfigureAssetDeliveryClient(assetDelivery)
+	sub := uid("download-retry-buyer")
+	order, err := svc.CreateCheckout(ctx, service.CheckoutDesc{
+		BuyerSub:   sub,
+		BuyerEmail: "download-retry@example.com",
+		Provider:   "alipay",
+		Items: []service.CheckoutItemDesc{{
+			SiteKey:      "shop",
+			ExternalID:   uid("product-download-retry"),
+			VariantID:    uid("variant-download-retry"),
+			Title:        "Retry Pack",
+			VariantTitle: "Standard",
+			SKU:          "RETRY-STD",
+			PriceCents:   1200,
+			Currency:     "CNY",
+			DeliveryKind: "bundle",
+			DeliveryRef:  `{"access":{"maxDownloads":1},"items":[{"kind":"asset_file","assetId":"asset-retry","enabled":true}]}`,
+			Quantity:     1,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckout: %v", err)
+	}
+	if _, err := svc.SettleCheckout(ctx, order.OrderNo, "dev", "dev-download-retry", 1200); err != nil {
+		t.Fatalf("SettleCheckout: %v", err)
+	}
+	if _, err := svc.ResolvePurchaseDownload(ctx, sub, order.OrderNo, "asset-retry"); err == nil {
+		t.Fatal("expected first signing attempt to fail")
+	}
+	download, err := svc.ResolvePurchaseDownload(ctx, sub, order.OrderNo, "asset-retry")
+	if err != nil {
+		t.Fatalf("second ResolvePurchaseDownload should still be allowed: %v", err)
+	}
+	if download.URL != "https://asset.example/grants/retry-token" {
+		t.Fatalf("download url = %q, want retry token", download.URL)
 	}
 }
 
@@ -627,6 +741,76 @@ func TestRecordPaymentFailureAppearsInOrderDetail(t *testing.T) {
 	}
 }
 
+func TestFreeCheckoutCreatesFulfilledOrderAndDelivery(t *testing.T) {
+	svc, pg, ctx := newSvc(t)
+	mailer := &captureDeliveryMailer{}
+	svc.ConfigureDelivery(service.DeliveryConfig{
+		SigningSecret: "test-secret",
+		PublicBaseURL: "https://shop.example",
+		TTL:           time.Minute,
+	})
+	svc.ConfigureDeliveryMailer(mailer)
+	sub := uid("free-buyer")
+	externalID := uid("variant-free")
+	res, err := svc.ClaimFreeCheckout(ctx, service.CheckoutDesc{
+		BuyerSub:   sub,
+		BuyerEmail: "free@example.com",
+		Items: []service.CheckoutItemDesc{{
+			SiteKey:      "shop",
+			ExternalID:   externalID,
+			VariantID:    uid("variant-id-free"),
+			Title:        "Community Pack",
+			VariantTitle: "Community",
+			SKU:          "COMM-FREE",
+			PriceCents:   0,
+			PointsCost:   0,
+			Currency:     "CNY",
+			DeliveryKind: "asset_file",
+			DeliveryRef:  "asset-free",
+			Quantity:     1,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("ClaimFreeCheckout: %v", err)
+	}
+	if res.Order.Status != model.OrderStatusFulfilled {
+		t.Fatalf("returned order status = %q, want fulfilled", res.Order.Status)
+	}
+	if res.Grant.Token == "" {
+		t.Fatal("expected delivery token")
+	}
+	if res.Grant.DeliveryRef != "asset-free" {
+		t.Fatalf("delivery ref = %q, want asset-free", res.Grant.DeliveryRef)
+	}
+	loaded, err := pg.GetOrderByNo(ctx, res.Order.OrderNo)
+	if err != nil {
+		t.Fatalf("GetOrderByNo: %v", err)
+	}
+	if loaded.Status != model.OrderStatusFulfilled {
+		t.Fatalf("db order status = %q, want fulfilled", loaded.Status)
+	}
+	if loaded.PaymentProvider != model.ProductKindFree || loaded.AmountCents != 0 {
+		t.Fatalf("unexpected free order payment snapshot: provider=%q amount=%d", loaded.PaymentProvider, loaded.AmountCents)
+	}
+	p, err := pg.GetProductByExternal(ctx, "shop", externalID)
+	if err != nil {
+		t.Fatalf("GetProductByExternal: %v", err)
+	}
+	if p == nil || p.Kind != model.ProductKindFree {
+		t.Fatalf("product kind = %+v, want free product", p)
+	}
+	ok, err := pg.EntitlementExists(ctx, sub, p.ID)
+	if err != nil {
+		t.Fatalf("EntitlementExists: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected entitlement for logged-in free claim")
+	}
+	if len(mailer.mails) != 1 {
+		t.Fatalf("delivery mails = %d, want 1", len(mailer.mails))
+	}
+}
+
 func countGrantsByState(grants []*model.DeliveryGrant, state string) int {
 	count := 0
 	for _, grant := range grants {
@@ -666,4 +850,26 @@ func (c *captureAssetDelivery) CreateDelivery(ctx context.Context, in service.As
 	c.assetID = in.AssetID
 	c.subjectID = in.SubjectID
 	return service.AssetDeliveryOutput{URL: c.url, ExpiresAt: time.Now().UTC().Add(time.Minute)}, nil
+}
+
+type flakyAssetDelivery struct {
+	url      string
+	attempts int
+}
+
+func (c *flakyAssetDelivery) CreateDelivery(ctx context.Context, in service.AssetDeliveryInput) (service.AssetDeliveryOutput, error) {
+	c.attempts++
+	if c.attempts == 1 {
+		return service.AssetDeliveryOutput{}, errAssetSigningUnavailable
+	}
+	return service.AssetDeliveryOutput{URL: c.url, ExpiresAt: time.Now().UTC().Add(time.Minute)}, nil
+}
+
+type staticCheckoutItemResolver struct {
+	out service.CurrentCheckoutItemResult
+	err error
+}
+
+func (r staticCheckoutItemResolver) CurrentCheckoutItem(ctx context.Context, in service.CurrentCheckoutItemInput) (service.CurrentCheckoutItemResult, error) {
+	return r.out, r.err
 }

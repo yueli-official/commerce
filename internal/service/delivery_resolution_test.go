@@ -50,6 +50,34 @@ func TestResolveAssetDeliveryDoesNotUseCurrentBundleForSnapshotPolicy(t *testing
 	}
 }
 
+func TestDeliveryBundleAccessRulesClampDownloadExpiry(t *testing.T) {
+	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+	got := deliveryBundleAccessRules(`{"access":{"expiresDays":2,"maxDownloads":1,"downloadLinkTTLMin":30}}`, now, 15*time.Minute)
+	if got.ExpiresAt == nil || !got.ExpiresAt.Equal(now.Add(48*time.Hour)) {
+		t.Fatalf("expiresAt = %v, want 48 hours from now", got.ExpiresAt)
+	}
+	if got.MaxDownloads != 1 {
+		t.Fatalf("max downloads = %d, want 1", got.MaxDownloads)
+	}
+	if got.DownloadTTL != 30*time.Minute {
+		t.Fatalf("download ttl = %s, want 30m", got.DownloadTTL)
+	}
+}
+
+func TestDeliveryBundleAccessRulesFallbackToServiceTTL(t *testing.T) {
+	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+	got := deliveryBundleAccessRules(`{"items":[]}`, now, 15*time.Minute)
+	if got.ExpiresAt != nil {
+		t.Fatalf("expiresAt = %v, want nil", got.ExpiresAt)
+	}
+	if got.MaxDownloads != 0 {
+		t.Fatalf("max downloads = %d, want unlimited", got.MaxDownloads)
+	}
+	if got.DownloadTTL != 15*time.Minute {
+		t.Fatalf("download ttl = %s, want service ttl", got.DownloadTTL)
+	}
+}
+
 func unitDeliveryResult(ref string) *DeliveryResult {
 	return &DeliveryResult{
 		Grant: &model.DeliveryGrant{DeliveryRef: ref},

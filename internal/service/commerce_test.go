@@ -123,8 +123,8 @@ func isAlnum(r rune) bool {
 // ----- tests ----------------------------------------------------------------
 
 // TestCreateOrder_LazyUpsertProduct verifies that CreateOrder lazily creates the product
-// and returns both order + product.  A second call with the same (site_key, external_id)
-// upserts the product rather than inserting a duplicate.
+// and returns both order + product. A second call with the same (site_key, external_id)
+// must keep the stored product snapshot authoritative instead of trusting request prices.
 func TestCreateOrder_LazyUpsertProduct(t *testing.T) {
 	svc, _, ctx := newSvc(t)
 	sub := uid("sub-lazy")
@@ -152,19 +152,25 @@ func TestCreateOrder_LazyUpsertProduct(t *testing.T) {
 	}
 	productID := p.ID
 
-	// Second order with updated price — same UNIQUE (site_key, external_id) → upsert.
+	// Second order with a tampered price must keep the stored product snapshot.
 	desc2 := desc
 	desc2.PriceCents = 2000
 	desc2.Title = "My Post v2"
-	_, p2, err := svc.CreateOrder(ctx, sub, desc2)
+	o2, p2, err := svc.CreateOrder(ctx, sub, desc2)
 	if err != nil {
-		t.Fatalf("CreateOrder (upsert): %v", err)
+		t.Fatalf("CreateOrder (existing product): %v", err)
 	}
 	if p2.ID != productID {
-		t.Errorf("upserted product ID changed: got %q, want %q", p2.ID, productID)
+		t.Errorf("existing product ID changed: got %q, want %q", p2.ID, productID)
 	}
-	if p2.PriceCents != 2000 {
-		t.Errorf("upserted price_cents = %d, want 2000", p2.PriceCents)
+	if p2.PriceCents != 1000 {
+		t.Errorf("existing product price_cents = %d, want 1000", p2.PriceCents)
+	}
+	if o2.AmountCents != 1000 {
+		t.Errorf("order amount_cents = %d, want 1000", o2.AmountCents)
+	}
+	if p2.Title != "My Post" {
+		t.Errorf("existing product title = %q, want My Post", p2.Title)
 	}
 }
 

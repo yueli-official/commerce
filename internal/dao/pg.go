@@ -3,6 +3,7 @@ package dao
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
@@ -103,13 +104,26 @@ func (r *PG) GetOrderByID(ctx context.Context, id string) (*model.Order, error) 
 	return o, nil
 }
 
-func (r *PG) ListOrders(ctx context.Context, status, q string, limit, offset int) ([]*model.Order, error) {
+func (r *PG) ListOrders(ctx context.Context, status, q string, limit, offset int) ([]*model.Order, int, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
 	if offset < 0 {
 		offset = 0
 	}
+	m := r.orderListModel(ctx, status, q)
+	total, err := r.orderListModel(ctx, status, q).Count()
+	if err != nil {
+		return nil, 0, err
+	}
+	var orders []*model.Order
+	if err := m.Order("created_at DESC").Limit(offset, limit).Scan(&orders); err != nil {
+		return nil, 0, err
+	}
+	return orders, total, nil
+}
+
+func (r *PG) orderListModel(ctx context.Context, status, q string) *gdb.Model {
 	m := r.db.Model("orders").Ctx(ctx)
 	if status != "" {
 		m = m.Where("status", status)
@@ -118,11 +132,7 @@ func (r *PG) ListOrders(ctx context.Context, status, q string, limit, offset int
 		like := "%" + q + "%"
 		m = m.Where("(order_no LIKE ? OR buyer_email LIKE ?)", like, like)
 	}
-	var orders []*model.Order
-	if err := m.Order("created_at DESC").Limit(offset, limit).Scan(&orders); err != nil {
-		return nil, err
-	}
-	return orders, nil
+	return m
 }
 
 // UpdateOrderStatus sets the status (and optionally paid_at) on an order.
@@ -361,7 +371,7 @@ func (r *PG) UpdateOrderStatusTx(ctx context.Context, tx gdb.TX, orderID, status
 	return err
 }
 
-func (r *PG) FulfillCheckoutTx(ctx context.Context, tx gdb.TX, orderID, providerTxID string, paidAt *gtime.Time) error {
+func (r *PG) FulfillCheckoutTx(ctx context.Context, tx gdb.TX, orderID, providerTxID string, paidAt *gtime.Time) (bool, error) {
 	data := g.Map{
 		"status":         model.OrderStatusFulfilled,
 		"delivery_state": model.DeliveryStateGranted,
@@ -370,8 +380,15 @@ func (r *PG) FulfillCheckoutTx(ctx context.Context, tx gdb.TX, orderID, provider
 		"provider_tx_id": providerTxID,
 		"paid_at":        paidAt,
 	}
-	_, err := tx.Ctx(ctx).Model("orders").Where("id", orderID).Where("status", model.OrderStatusPaying).Data(data).Update()
-	return err
+	res, err := tx.Ctx(ctx).Model("orders").Where("id", orderID).Where("status", model.OrderStatusPaying).Data(data).Update()
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (r *PG) InsertPaymentEventTx(ctx context.Context, tx gdb.TX, event *model.PaymentEvent) error {
@@ -392,11 +409,43 @@ func (r *PG) InsertDeliveryGrantTx(ctx context.Context, tx gdb.TX, grant *model.
 		grant.ID = uuid.NewString()
 	}
 	_, err := tx.Ctx(ctx).Exec(`
-INSERT INTO delivery_grants (id, order_id, order_item_id, buyer_sub, buyer_email, token_hash, delivery_ref, state, expires_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+INSERT INTO delivery_grants (id, order_id, order_item_id, buyer_sub, buyer_email, token_hash, delivery_ref, state, expires_at, max_downloads, download_count)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		grant.ID, grant.OrderID, nullableString(grant.OrderItemID), nullableString(grant.BuyerSub), nullableString(grant.BuyerEmail),
-		grant.TokenHash, grant.DeliveryRef, grant.State, grant.ExpiresAt,
+		grant.TokenHash, grant.DeliveryRef, grant.State, grant.ExpiresAt, grant.MaxDownloads, grant.DownloadCount,
 	)
+	return err
+}
+
+func (r *PG) RecordDeliveryDownload(ctx context.Context, grantID string, maxDownloads int) (bool, error) {
+	if maxDownloads <= 0 {
+		_, err := r.db.Exec(ctx, `
+UPDATE delivery_grants
+   SET download_count = download_count + 1
+ WHERE id = ? AND state = 'active'`, grantID)
+		return true, err
+	}
+	res, err := r.db.Exec(ctx, `
+UPDATE delivery_grants
+   SET download_count = download_count + 1
+ WHERE id = ?
+   AND state = 'active'
+   AND download_count < ?`, grantID, maxDownloads)
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
+func (r *PG) RollbackDeliveryDownload(ctx context.Context, grantID string) error {
+	_, err := r.db.Exec(ctx, `
+UPDATE delivery_grants
+   SET download_count = GREATEST(download_count - 1, 0)
+ WHERE id = ?`, grantID)
 	return err
 }
 
@@ -414,22 +463,48 @@ func (r *PG) DeliveryGrantByTokenHash(ctx context.Context, tokenHash string) (*m
 	return grant, nil
 }
 
-func (r *PG) DeliveryGrantsByBuyerSub(ctx context.Context, sub string, limit, offset int) ([]*model.DeliveryGrant, error) {
+func (r *PG) DeliveryGrantsByBuyerSub(ctx context.Context, sub, q, state string, limit, offset int) ([]*model.DeliveryGrant, int, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
 	if offset < 0 {
 		offset = 0
 	}
+	m := r.deliveryGrantsByBuyerSubModel(ctx, sub, q, state)
+	total, err := r.deliveryGrantsByBuyerSubModel(ctx, sub, q, state).Count()
+	if err != nil {
+		return nil, 0, err
+	}
 	var grants []*model.DeliveryGrant
-	err := r.db.Model("delivery_grants").Ctx(ctx).
-		Where("buyer_sub", sub).
-		Where("state", "active").
-		Where("(expires_at IS NULL OR expires_at > now())").
-		Order("created_at DESC").
+	err = m.Order("g.created_at DESC").
 		Limit(offset, limit).
 		Scan(&grants)
-	return grants, err
+	return grants, total, err
+}
+
+func (r *PG) deliveryGrantsByBuyerSubModel(ctx context.Context, sub, q, state string) *gdb.Model {
+	m := r.db.Model("delivery_grants g").Ctx(ctx).
+		Fields("g.*").
+		LeftJoin("orders o", "o.id = g.order_id").
+		LeftJoin("order_items oi", "oi.id = g.order_item_id").
+		Where("g.buyer_sub", sub)
+	state = strings.TrimSpace(state)
+	switch state {
+	case "":
+		// All purchase grants for the buyer.
+	case "active":
+		m = m.Where("g.state", "active").Where("(g.expires_at IS NULL OR g.expires_at > now())")
+	case "expired":
+		m = m.Where("g.state", "active").Where("g.expires_at IS NOT NULL AND g.expires_at <= now()")
+	default:
+		m = m.Where("g.state", state)
+	}
+	q = strings.TrimSpace(q)
+	if q != "" {
+		like := "%" + q + "%"
+		m = m.Where("(o.order_no LIKE ? OR oi.title_snapshot LIKE ? OR oi.variant_title_snapshot LIKE ? OR oi.sku_snapshot LIKE ? OR g.delivery_ref LIKE ?)", like, like, like, like, like)
+	}
+	return m
 }
 
 func (r *PG) DeliveryGrantsByOrderID(ctx context.Context, orderID string) ([]*model.DeliveryGrant, error) {

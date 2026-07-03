@@ -64,6 +64,31 @@ type CheckoutItemDesc struct {
 	Quantity              int
 }
 
+type CurrentCheckoutItemInput struct {
+	SiteKey    string
+	ExternalID string
+	VariantID  string
+}
+
+type CurrentCheckoutItemResult struct {
+	SiteKey               string
+	ExternalID            string
+	VariantID             string
+	Title                 string
+	VariantTitle          string
+	SKU                   string
+	PriceCents            int
+	PointsCost            int
+	Currency              string
+	DeliveryKind          string
+	DeliveryRef           string
+	PurchaseLimitPerBuyer int
+}
+
+type CurrentCheckoutItemResolver interface {
+	CurrentCheckoutItem(ctx context.Context, in CurrentCheckoutItemInput) (CurrentCheckoutItemResult, error)
+}
+
 type CheckoutGrantResult struct {
 	Token       string
 	State       string
@@ -79,10 +104,21 @@ type DeliveryResult struct {
 	DownloadExpiresAt *time.Time
 }
 
+type PurchaseFilter struct {
+	Sub   string
+	Q     string
+	State string
+}
+
 type PointsCheckoutResult struct {
 	Order   *model.Order
 	Grant   *CheckoutGrantResult
 	Balance int64
+}
+
+type FreeCheckoutResult struct {
+	Order *model.Order
+	Grant *CheckoutGrantResult
 }
 
 type DeliveryDownloadResult struct {
@@ -175,6 +211,12 @@ type DeliveryConfig struct {
 	TTL           time.Duration
 }
 
+type deliveryAccessRulesResult struct {
+	ExpiresAt    *time.Time
+	MaxDownloads int
+	DownloadTTL  time.Duration
+}
+
 const reusableCheckoutWindow = 10 * time.Minute
 
 var paymentMethodDefinitions = map[string]PaymentMethodConfig{
@@ -220,6 +262,12 @@ func WithCurrentDeliveryResolver(resolver CurrentDeliveryResolver) Option {
 	}
 }
 
+func WithCurrentCheckoutItemResolver(resolver CurrentCheckoutItemResolver) Option {
+	return func(s *Service) {
+		s.ConfigureCurrentCheckoutItemResolver(resolver)
+	}
+}
+
 // Service holds the DAO and implements the commerce domain logic.
 type Service struct {
 	db              *dao.PG
@@ -228,6 +276,7 @@ type Service struct {
 	mailer          DeliveryMailer
 	assetDelivery   AssetDeliveryClient
 	currentDelivery CurrentDeliveryResolver
+	currentCheckout CurrentCheckoutItemResolver
 }
 
 // New constructs a Service.
@@ -260,21 +309,35 @@ func (s *Service) ConfigureCurrentDeliveryResolver(resolver CurrentDeliveryResol
 	s.currentDelivery = resolver
 }
 
-// CreateOrder lazily upserts the product from desc, then inserts a new order in
-// "pending" status. Returns both the created order and the resolved product.
+func (s *Service) ConfigureCurrentCheckoutItemResolver(resolver CurrentCheckoutItemResolver) {
+	s.currentCheckout = resolver
+}
+
+// CreateOrder lazily creates a legacy product, then inserts a new order in
+// "pending" status. If the product already exists, its stored catalog snapshot
+// is authoritative; callers cannot overwrite price or title through this path.
 func (s *Service) CreateOrder(ctx context.Context, sub string, desc OrderDesc) (*model.Order, *model.Product, error) {
-	// Lazy upsert product.
-	p := &model.Product{
-		SiteKey:    desc.SiteKey,
-		ExternalID: desc.ExternalID,
-		Kind:       desc.Kind,
-		Title:      desc.Title,
-		PriceCents: desc.PriceCents,
-		Currency:   desc.Currency,
-		Status:     model.ProductStatusActive,
-	}
-	if err := s.db.UpsertProduct(ctx, p); err != nil {
+	p, err := s.db.GetProductByExternal(ctx, desc.SiteKey, desc.ExternalID)
+	if err != nil {
 		return nil, nil, err
+	}
+	if p == nil {
+		p = &model.Product{
+			SiteKey:    desc.SiteKey,
+			ExternalID: desc.ExternalID,
+			Kind:       desc.Kind,
+			Title:      desc.Title,
+			PriceCents: desc.PriceCents,
+			PointsCost: desc.PointsCost,
+			Currency:   desc.Currency,
+			Status:     model.ProductStatusActive,
+		}
+		if err := s.db.UpsertProduct(ctx, p); err != nil {
+			return nil, nil, err
+		}
+	}
+	if p.Status != "" && p.Status != model.ProductStatusActive {
+		return nil, nil, commerceerr.InvalidRequest("product is not active")
 	}
 
 	// Build and insert the order.
@@ -282,8 +345,8 @@ func (s *Service) CreateOrder(ctx context.Context, sub string, desc OrderDesc) (
 		OrderNo:     NewOrderNo(),
 		Sub:         sub,
 		ProductID:   p.ID,
-		AmountCents: desc.PriceCents,
-		Currency:    desc.Currency,
+		AmountCents: p.PriceCents,
+		Currency:    p.Currency,
 		Status:      model.OrderStatusPending,
 	}
 	if err := s.db.InsertOrder(ctx, o); err != nil {
@@ -298,6 +361,10 @@ func (s *Service) CreateCheckout(ctx context.Context, desc CheckoutDesc) (*model
 		return nil, err
 	}
 	if err := validateCheckoutItems(desc.Items); err != nil {
+		return nil, err
+	}
+	desc.Items, err = s.authoritativeCheckoutItems(ctx, desc.Items)
+	if err != nil {
 		return nil, err
 	}
 	if err := s.enforcePurchaseLimits(ctx, buyer, desc.Items); err != nil {
@@ -400,6 +467,10 @@ func (s *Service) RedeemCheckout(ctx context.Context, desc CheckoutDesc) (*Point
 	if err := validateCheckoutItems(desc.Items); err != nil {
 		return nil, err
 	}
+	desc.Items, err = s.authoritativeCheckoutItems(ctx, desc.Items)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.enforcePurchaseLimits(ctx, buyer, desc.Items); err != nil {
 		return nil, err
 	}
@@ -454,6 +525,7 @@ func (s *Service) RedeemCheckout(ctx context.Context, desc CheckoutDesc) (*Point
 	}
 	now := gtime.New(time.Now())
 	first := items[0]
+	grantAccess := deliveryBundleAccessRules(first.DeliveryRefSnapshot, now.Time, s.delivery.TTL)
 	spendRef := ""
 	err = s.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		if err := s.db.InsertCheckoutOrderTx(ctx, tx, o, items); err != nil {
@@ -481,8 +553,12 @@ func (s *Service) RedeemCheckout(ctx context.Context, desc CheckoutDesc) (*Point
 				return commerceerr.InsufficientPoints(pointsToSpend)
 			}
 		}
-		if err := s.db.FulfillCheckoutTx(ctx, tx, o.ID, "POINTS-"+o.OrderNo, now); err != nil {
+		fulfilled, err := s.db.FulfillCheckoutTx(ctx, tx, o.ID, "POINTS-"+o.OrderNo, now)
+		if err != nil {
 			return err
+		}
+		if !fulfilled {
+			return commerceerr.OrderInvalidState(o.Status, model.OrderStatusFulfilled)
 		}
 		if err := s.db.InsertPaymentEventTx(ctx, tx, &model.PaymentEvent{
 			OrderID: o.ID, Provider: model.ProductKindPoints, EventType: "redeem", ProviderEventID: spendRef,
@@ -493,6 +569,7 @@ func (s *Service) RedeemCheckout(ctx context.Context, desc CheckoutDesc) (*Point
 		return s.db.InsertDeliveryGrantTx(ctx, tx, &model.DeliveryGrant{
 			OrderID: o.ID, OrderItemID: first.ID, BuyerSub: o.BuyerSub, BuyerEmail: o.BuyerEmail,
 			TokenHash: tokenHash, DeliveryRef: first.DeliveryRefSnapshot, State: "active",
+			ExpiresAt: grantAccess.ExpiresAt, MaxDownloads: grantAccess.MaxDownloads,
 		})
 	})
 	if err != nil {
@@ -510,6 +587,115 @@ func (s *Service) RedeemCheckout(ctx context.Context, desc CheckoutDesc) (*Point
 	}, nil
 }
 
+func (s *Service) ClaimFreeCheckout(ctx context.Context, desc CheckoutDesc) (*FreeCheckoutResult, error) {
+	buyer, err := s.resolveBuyer(ctx, desc)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateCheckoutItems(desc.Items); err != nil {
+		return nil, err
+	}
+	desc.Items, err = s.authoritativeCheckoutItems(ctx, desc.Items)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.enforcePurchaseLimits(ctx, buyer, desc.Items); err != nil {
+		return nil, err
+	}
+
+	var (
+		items          []*model.OrderItem
+		firstProductID string
+		currency       = "CNY"
+	)
+	for _, in := range desc.Items {
+		if in.Quantity <= 0 {
+			in.Quantity = 1
+		}
+		if in.PriceCents != 0 || in.PointsCost != 0 {
+			return nil, commerceerr.InvalidRequest("free checkout only supports zero-price items")
+		}
+		if in.Currency != "" {
+			currency = in.Currency
+		}
+		p := &model.Product{
+			SiteKey: in.SiteKey, ExternalID: in.ExternalID, Kind: model.ProductKindFree,
+			Title: in.Title, PriceCents: 0, PointsCost: 0, Currency: currency, Status: model.ProductStatusActive,
+		}
+		if err := s.db.UpsertProduct(ctx, p); err != nil {
+			return nil, err
+		}
+		if firstProductID == "" {
+			firstProductID = p.ID
+		}
+		items = append(items, &model.OrderItem{
+			SiteKey: in.SiteKey, ExternalID: in.ExternalID, ProductID: p.ID, VariantID: in.VariantID,
+			TitleSnapshot: in.Title, VariantTitleSnapshot: in.VariantTitle, SKUSnapshot: in.SKU,
+			Quantity: in.Quantity, UnitPriceCents: 0, UnitPointsCost: 0,
+			Currency: currency, DeliveryKindSnapshot: defaultString(in.DeliveryKind, "asset_file"),
+			DeliveryRefSnapshot: in.DeliveryRef,
+		})
+	}
+
+	rawToken, tokenHash, err := newDeliveryToken()
+	if err != nil {
+		return nil, err
+	}
+	o := &model.Order{
+		OrderNo: NewOrderNo(), Sub: buyer.BuyerSub, ProductID: firstProductID, AmountCents: 0, Currency: currency,
+		Status: model.OrderStatusPaying, Gateway: model.ProductKindFree, BuyerID: buyer.ID, BuyerSub: buyer.BuyerSub, BuyerEmail: buyer.BuyerEmail,
+		PaymentProvider: model.ProductKindFree, DeliveryState: model.DeliveryStatePending,
+	}
+	now := gtime.New(time.Now())
+	first := items[0]
+	grantAccess := deliveryBundleAccessRules(first.DeliveryRefSnapshot, now.Time, s.delivery.TTL)
+	err = s.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		if err := s.db.InsertCheckoutOrderTx(ctx, tx, o, items); err != nil {
+			return err
+		}
+		fulfilled, err := s.db.FulfillCheckoutTx(ctx, tx, o.ID, "FREE-"+o.OrderNo, now)
+		if err != nil {
+			return err
+		}
+		if !fulfilled {
+			return commerceerr.OrderInvalidState(o.Status, model.OrderStatusFulfilled)
+		}
+		if err := s.db.InsertPaymentEventTx(ctx, tx, &model.PaymentEvent{
+			OrderID: o.ID, Provider: model.ProductKindFree, EventType: "claim", ProviderEventID: o.OrderNo,
+			AmountCents: 0, Success: true, Message: "free checkout claimed",
+		}); err != nil {
+			return err
+		}
+		if o.BuyerSub != "" {
+			for _, item := range items {
+				if err := s.db.InsertEntitlementTx(ctx, tx, &model.Entitlement{
+					Sub: itemBuyerSub(o), ProductID: item.ProductID, Source: model.EntitlementSourceFree, OrderID: &o.ID,
+				}); err != nil {
+					return err
+				}
+			}
+		}
+		return s.db.InsertDeliveryGrantTx(ctx, tx, &model.DeliveryGrant{
+			OrderID: o.ID, OrderItemID: first.ID, BuyerSub: o.BuyerSub, BuyerEmail: o.BuyerEmail,
+			TokenHash: tokenHash, DeliveryRef: first.DeliveryRefSnapshot, State: "active",
+			ExpiresAt: grantAccess.ExpiresAt, MaxDownloads: grantAccess.MaxDownloads,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	o.Status = model.OrderStatusFulfilled
+	o.DeliveryState = model.DeliveryStateGranted
+	paidAt := now.Time
+	o.PaidAt = &paidAt
+	o.FulfilledAt = &paidAt
+	s.sendDeliveryMail(ctx, o, first, rawToken)
+	return &FreeCheckoutResult{
+		Order: o,
+		Grant: &CheckoutGrantResult{Token: rawToken, State: model.DeliveryStateGranted, DeliveryRef: first.DeliveryRefSnapshot},
+	}, nil
+}
+
 func validateCheckoutItems(items []CheckoutItemDesc) error {
 	if len(items) == 0 {
 		return commerceerr.NotifyInvalid("checkout requires at least one item")
@@ -518,6 +704,43 @@ func validateCheckoutItems(items []CheckoutItemDesc) error {
 		return commerceerr.NotifyInvalid("checkout supports at most 20 items")
 	}
 	return nil
+}
+
+func (s *Service) authoritativeCheckoutItems(ctx context.Context, items []CheckoutItemDesc) ([]CheckoutItemDesc, error) {
+	if s.currentCheckout == nil {
+		return items, nil
+	}
+	out := make([]CheckoutItemDesc, 0, len(items))
+	for _, item := range items {
+		quantity := item.Quantity
+		if quantity <= 0 {
+			quantity = 1
+		}
+		current, err := s.currentCheckout.CurrentCheckoutItem(ctx, CurrentCheckoutItemInput{
+			SiteKey:    strings.TrimSpace(item.SiteKey),
+			ExternalID: strings.TrimSpace(item.ExternalID),
+			VariantID:  strings.TrimSpace(item.VariantID),
+		})
+		if err != nil {
+			return nil, commerceerr.InvalidRequest("checkout item is not available")
+		}
+		out = append(out, CheckoutItemDesc{
+			SiteKey:               defaultString(strings.TrimSpace(current.SiteKey), strings.TrimSpace(item.SiteKey)),
+			ExternalID:            defaultString(strings.TrimSpace(current.ExternalID), strings.TrimSpace(item.ExternalID)),
+			VariantID:             defaultString(strings.TrimSpace(current.VariantID), strings.TrimSpace(item.VariantID)),
+			Title:                 strings.TrimSpace(current.Title),
+			VariantTitle:          strings.TrimSpace(current.VariantTitle),
+			SKU:                   strings.TrimSpace(current.SKU),
+			PriceCents:            current.PriceCents,
+			PointsCost:            current.PointsCost,
+			Currency:              defaultString(strings.TrimSpace(current.Currency), "CNY"),
+			DeliveryKind:          defaultString(strings.TrimSpace(current.DeliveryKind), "asset_file"),
+			DeliveryRef:           strings.TrimSpace(current.DeliveryRef),
+			PurchaseLimitPerBuyer: current.PurchaseLimitPerBuyer,
+			Quantity:              quantity,
+		})
+	}
+	return out, nil
 }
 
 func (s *Service) enforcePurchaseLimits(ctx context.Context, buyer *model.Buyer, items []CheckoutItemDesc) error {
@@ -576,10 +799,17 @@ func (s *Service) SettleCheckout(ctx context.Context, orderNo, provider, provide
 	}
 	now := gtime.New(time.Now())
 	first := items[0]
+	grantAccess := deliveryBundleAccessRules(first.DeliveryRefSnapshot, now.Time, s.delivery.TTL)
+	settled := false
 	err = s.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		if err := s.db.FulfillCheckoutTx(ctx, tx, o.ID, providerTxID, now); err != nil {
+		fulfilled, err := s.db.FulfillCheckoutTx(ctx, tx, o.ID, providerTxID, now)
+		if err != nil {
 			return err
 		}
+		if !fulfilled {
+			return nil
+		}
+		settled = true
 		if err := s.db.InsertPaymentEventTx(ctx, tx, &model.PaymentEvent{
 			OrderID: o.ID, Provider: defaultString(provider, o.PaymentProvider), EventType: "settle",
 			ProviderEventID: providerTxID, AmountCents: amountCents, Success: true, Message: "checkout settled",
@@ -598,10 +828,14 @@ func (s *Service) SettleCheckout(ctx context.Context, orderNo, provider, provide
 		return s.db.InsertDeliveryGrantTx(ctx, tx, &model.DeliveryGrant{
 			OrderID: o.ID, OrderItemID: first.ID, BuyerSub: o.BuyerSub, BuyerEmail: o.BuyerEmail,
 			TokenHash: tokenHash, DeliveryRef: first.DeliveryRefSnapshot, State: "active",
+			ExpiresAt: grantAccess.ExpiresAt, MaxDownloads: grantAccess.MaxDownloads,
 		})
 	})
 	if err != nil {
 		return nil, err
+	}
+	if !settled {
+		return &CheckoutGrantResult{State: model.DeliveryStateGranted}, nil
 	}
 	s.sendDeliveryMail(ctx, o, first, rawToken)
 	return &CheckoutGrantResult{Token: rawToken, State: model.DeliveryStateGranted, DeliveryRef: first.DeliveryRefSnapshot}, nil
@@ -900,7 +1134,7 @@ func (s *Service) GetOrderByNo(ctx context.Context, orderNo string) (*model.Orde
 	return o, nil
 }
 
-func (s *Service) ListOrders(ctx context.Context, status, q string, limit, offset int) ([]*model.Order, error) {
+func (s *Service) ListOrders(ctx context.Context, status, q string, limit, offset int) ([]*model.Order, int, error) {
 	return s.db.ListOrders(ctx, strings.TrimSpace(status), strings.TrimSpace(q), limit, offset)
 }
 
@@ -1033,10 +1267,12 @@ func (s *Service) createManualDeliveryGrant(ctx context.Context, orderNo string,
 		return nil, err
 	}
 	first := items[0]
+	grantAccess := deliveryBundleAccessRules(first.DeliveryRefSnapshot, time.Now().UTC(), s.delivery.TTL)
 	err = s.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		if err := s.db.InsertDeliveryGrantTx(ctx, tx, &model.DeliveryGrant{
 			OrderID: order.ID, OrderItemID: first.ID, BuyerSub: order.BuyerSub, BuyerEmail: order.BuyerEmail,
 			TokenHash: tokenHash, DeliveryRef: first.DeliveryRefSnapshot, State: "active",
+			ExpiresAt: grantAccess.ExpiresAt, MaxDownloads: grantAccess.MaxDownloads,
 		}); err != nil {
 			return err
 		}
@@ -1072,20 +1308,21 @@ func (s *Service) DeliveryByToken(ctx context.Context, token string) (*DeliveryR
 	return res, nil
 }
 
-func (s *Service) Purchases(ctx context.Context, sub string, limit, offset int) ([]*DeliveryResult, error) {
-	grants, err := s.db.DeliveryGrantsByBuyerSub(ctx, strings.TrimSpace(sub), limit, offset)
+func (s *Service) Purchases(ctx context.Context, filter PurchaseFilter, limit, offset int) ([]*DeliveryResult, int, error) {
+	filter = PurchaseFilter{Sub: strings.TrimSpace(filter.Sub), Q: strings.TrimSpace(filter.Q), State: strings.TrimSpace(filter.State)}
+	grants, total, err := s.db.DeliveryGrantsByBuyerSub(ctx, filter.Sub, filter.Q, filter.State, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	out := make([]*DeliveryResult, 0, len(grants))
 	for _, grant := range grants {
 		res, err := s.deliveryResult(ctx, grant)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, res)
 	}
-	return out, nil
+	return out, total, nil
 }
 
 func (s *Service) PurchaseByOrder(ctx context.Context, buyerSub, orderNo string) (*DeliveryResult, error) {
@@ -1146,7 +1383,15 @@ func (s *Service) ResolveDeliveryDownload(ctx context.Context, token, exp, sig s
 	if !hmac.Equal([]byte(expected), []byte(strings.TrimSpace(sig))) {
 		return DeliveryDownloadResult{}, commerceerr.InvalidRequest("invalid delivery signature")
 	}
-	return s.resolveAssetDelivery(ctx, delivery, expiresAt)
+	if err := s.recordDeliveryDownload(ctx, delivery.Grant); err != nil {
+		return DeliveryDownloadResult{}, err
+	}
+	download, err := s.resolveAssetDelivery(ctx, delivery, expiresAt)
+	if err != nil {
+		s.rollbackDeliveryDownload(ctx, delivery.Grant)
+		return DeliveryDownloadResult{}, err
+	}
+	return download, nil
 }
 
 func (s *Service) ResolvePurchaseDownload(ctx context.Context, buyerSub, orderNo, assetID string) (DeliveryDownloadResult, error) {
@@ -1154,7 +1399,44 @@ func (s *Service) ResolvePurchaseDownload(ctx context.Context, buyerSub, orderNo
 	if err != nil {
 		return DeliveryDownloadResult{}, err
 	}
-	return s.resolveAssetDelivery(ctx, delivery, time.Now().UTC().Add(s.delivery.TTL), assetID)
+	if err := s.recordDeliveryDownload(ctx, delivery.Grant); err != nil {
+		return DeliveryDownloadResult{}, err
+	}
+	rules := deliveryBundleAccessRules(delivery.Grant.DeliveryRef, time.Now().UTC(), s.delivery.TTL)
+	expiresAt := time.Now().UTC().Add(rules.DownloadTTL)
+	if delivery.Grant.ExpiresAt != nil && delivery.Grant.ExpiresAt.Before(expiresAt) {
+		expiresAt = *delivery.Grant.ExpiresAt
+	}
+	download, err := s.resolveAssetDelivery(ctx, delivery, expiresAt, assetID)
+	if err != nil {
+		s.rollbackDeliveryDownload(ctx, delivery.Grant)
+		return DeliveryDownloadResult{}, err
+	}
+	return download, nil
+}
+
+func (s *Service) recordDeliveryDownload(ctx context.Context, grant *model.DeliveryGrant) error {
+	if grant == nil || strings.TrimSpace(grant.ID) == "" {
+		return commerceerr.OrderNotFound("delivery")
+	}
+	ok, err := s.db.RecordDeliveryDownload(ctx, grant.ID, grant.MaxDownloads)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return commerceerr.InvalidRequest("download limit exceeded")
+	}
+	grant.DownloadCount++
+	return nil
+}
+
+func (s *Service) rollbackDeliveryDownload(ctx context.Context, grant *model.DeliveryGrant) {
+	if grant == nil || strings.TrimSpace(grant.ID) == "" {
+		return
+	}
+	if err := s.db.RollbackDeliveryDownload(ctx, grant.ID); err == nil && grant.DownloadCount > 0 {
+		grant.DownloadCount--
+	}
 }
 
 func (s *Service) resolveAssetDelivery(ctx context.Context, delivery *DeliveryResult, expiresAt time.Time, requestedAssetID ...string) (DeliveryDownloadResult, error) {
@@ -1233,6 +1515,34 @@ func deliveryBundleUpdatePolicy(raw string) string {
 	return policy
 }
 
+func deliveryBundleAccessRules(raw string, now time.Time, defaultTTL time.Duration) deliveryAccessRulesResult {
+	if defaultTTL <= 0 {
+		defaultTTL = 15 * time.Minute
+	}
+	out := deliveryAccessRulesResult{DownloadTTL: defaultTTL}
+	var payload struct {
+		Access struct {
+			ExpiresDays        int `json:"expiresDays"`
+			MaxDownloads       int `json:"maxDownloads"`
+			DownloadLinkTTLMin int `json:"downloadLinkTTLMin"`
+		} `json:"access"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return out
+	}
+	if payload.Access.ExpiresDays > 0 {
+		expiresAt := now.Add(time.Duration(payload.Access.ExpiresDays) * 24 * time.Hour)
+		out.ExpiresAt = &expiresAt
+	}
+	if payload.Access.MaxDownloads > 0 {
+		out.MaxDownloads = payload.Access.MaxDownloads
+	}
+	if payload.Access.DownloadLinkTTLMin > 0 {
+		out.DownloadTTL = time.Duration(payload.Access.DownloadLinkTTLMin) * time.Minute
+	}
+	return out
+}
+
 func assetIDFromDeliveryBundle(raw, requested string) (string, error) {
 	var payload struct {
 		Items []struct {
@@ -1301,20 +1611,29 @@ func (s *Service) attachDownloadURL(res *DeliveryResult) {
 	if res.Item != nil && res.Item.DeliveryKindSnapshot != "" && res.Item.DeliveryKindSnapshot != "asset_file" {
 		return
 	}
-	url, expiresAt := s.signedDeliveryURL(res.Token, res.Grant.DeliveryRef)
+	rules := deliveryBundleAccessRules(res.Grant.DeliveryRef, time.Now().UTC(), s.delivery.TTL)
+	expiresAt := time.Now().UTC().Add(rules.DownloadTTL)
+	if res.Grant.ExpiresAt != nil && res.Grant.ExpiresAt.Before(expiresAt) {
+		expiresAt = *res.Grant.ExpiresAt
+	}
+	url := s.signedDeliveryURLWithExpiry(res.Token, res.Grant.DeliveryRef, expiresAt)
 	res.DownloadURL = url
 	res.DownloadExpiresAt = &expiresAt
 }
 
 func (s *Service) signedDeliveryURL(token, deliveryRef string) (string, time.Time) {
 	expiresAt := time.Now().UTC().Add(s.delivery.TTL)
+	return s.signedDeliveryURLWithExpiry(token, deliveryRef, expiresAt), expiresAt
+}
+
+func (s *Service) signedDeliveryURLWithExpiry(token, deliveryRef string, expiresAt time.Time) string {
 	exp := strconv.FormatInt(expiresAt.Unix(), 10)
 	sig := s.deliverySignature(token, exp, deliveryRef)
 	q := url.Values{}
 	q.Set("exp", exp)
 	q.Set("sig", sig)
 	path := "/api/v1/delivery/" + url.PathEscape(token) + "/download"
-	return s.delivery.PublicBaseURL + path + "?" + q.Encode(), expiresAt
+	return s.delivery.PublicBaseURL + path + "?" + q.Encode()
 }
 
 func (s *Service) deliverySignature(token, exp, deliveryRef string) string {

@@ -52,8 +52,10 @@ commerce:
     scope: "asset:sign"
 
   shopService:
-    # Optional: when configured, purchases whose delivery bundle uses
-    # updatePolicy=latest resolve current shop variant delivery before signing.
+    # Required for shop checkout security: commerce re-reads the current shop
+    # product variant snapshot before creating an order, so browser-supplied
+    # price/delivery fields cannot be trusted. Also used by updatePolicy=latest
+    # purchases before signing current delivery.
     base_url: "http://localhost:8088"
 
   mailer:
