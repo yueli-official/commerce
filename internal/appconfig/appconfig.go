@@ -8,8 +8,8 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 
-	"platform/gokit/mail"
 	"platform/services/commerce/internal/assetclient"
+	"platform/services/commerce/internal/notificationclient"
 	"platform/services/commerce/internal/service"
 	"platform/services/commerce/internal/shopclient"
 )
@@ -50,17 +50,45 @@ func LoadDelivery(ctx context.Context) service.DeliveryConfig {
 	}
 }
 
-// BuildDeliveryMailer returns the virtual-goods delivery mail transport. SMTP is
-// enabled only when commerce.mailer.mode=smtp; otherwise mail is logged in dev.
+// BuildDeliveryMailer returns the virtual-goods delivery notifier. Commerce
+// sends a scene notification; provider/channel details live in notification.
 func BuildDeliveryMailer(ctx context.Context) service.DeliveryMailer {
-	var sender mail.Sender
-	if g.Cfg().MustGet(ctx, "commerce.mailer.mode").String() == "smtp" {
-		s := func(k string) string { return g.Cfg().MustGet(ctx, "commerce.mailer.smtp."+k).String() }
-		sender = mail.NewSMTP(s("host"), s("port"), s("username"), s("password"), s("from"), s("fromName"))
-	} else {
-		sender = mail.NewDev()
+	cfg := notificationclient.Config{
+		BaseURL:  g.Cfg().MustGet(ctx, "commerce.notificationService.base_url").String(),
+		APIToken: g.Cfg().MustGet(ctx, "commerce.notificationService.api_token").String(),
 	}
-	return service.NewDeliveryMailSender(sender)
+	if cfg.BaseURL == "" {
+		g.Log().Warning(ctx, "commerce.notificationService.base_url is empty; delivery notification email disabled")
+		return nil
+	}
+	client, err := notificationclient.New(cfg)
+	if err != nil {
+		panic(err)
+	}
+	return notificationDeliverySender{client: client}
+}
+
+type notificationDeliverySender struct {
+	client *notificationclient.Client
+}
+
+func (s notificationDeliverySender) SendDelivery(ctx context.Context, in service.DeliveryMail) error {
+	if s.client == nil || !service.DeliveryEmailAvailable(in) {
+		return nil
+	}
+	_, err := s.client.Send(ctx, notificationclient.SendInput{
+		IdempotencyKey: "commerce.delivery_ready:" + in.OrderNo + ":" + in.To,
+		Scene:          "commerce.delivery_ready",
+		Channel:        "email",
+		Recipient:      notificationclient.Recipient{Email: in.To},
+		Data: map[string]string{
+			"orderNo":     in.OrderNo,
+			"title":       in.Title,
+			"deliveryRef": in.DeliveryRef,
+			"deliveryUrl": in.DeliveryURL,
+		},
+	})
+	return err
 }
 
 type assetDeliveryAdapter struct {

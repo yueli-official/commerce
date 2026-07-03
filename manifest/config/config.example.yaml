@@ -58,15 +58,10 @@ commerce:
     # purchases before signing current delivery.
     base_url: "http://localhost:8088"
 
-  mailer:
-    mode: "dev" # dev | smtp
-    smtp:
-      host: ""
-      port: "465"
-      username: ""
-      password: ""
-      from: ""
-      fromName: ""
+  notificationService:
+    # Optional for local dev, required if delivery-ready emails should be sent.
+    base_url: "http://localhost:8089"
+    api_token: ""
 
   alipay:
     app_id: ""
