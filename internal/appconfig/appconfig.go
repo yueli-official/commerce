@@ -195,7 +195,8 @@ func LoadSiteContext(ctx context.Context) *sitecontext.Resolver {
 			ShopBaseURL:     g.NewVar(value["shopBaseUrl"]).String(),
 		})
 	}
-	return sitecontext.New(contexts)
+	required := g.Cfg().MustGet(ctx, "commerce.requireTrustedSiteContext", true).Bool()
+	return sitecontext.NewWithRequired(contexts, required)
 }
 
 func BuildCurrentDeliveryResolver(ctx context.Context, sites ...*sitecontext.Resolver) service.CurrentDeliveryResolver {

@@ -92,3 +92,10 @@ func TestRequireSiteRejectsUnsignedManagedSiteButKeepsLegacyFallback(t *testing.
 		t.Fatalf("RequireSite(legacy) = %q, %v", got, err)
 	}
 }
+
+func TestRequireSiteStrictModeRejectsEveryUntrustedConsumer(t *testing.T) {
+	resolver := NewWithRequired([]Context{{SiteKey: "shop-ae"}}, true)
+	if _, err := resolver.RequireSite(context.Background(), "legacy-product"); !errors.Is(err, ErrTrustedContextRequired) {
+		t.Fatalf("RequireSite(strict legacy) error = %v, want ErrTrustedContextRequired", err)
+	}
+}

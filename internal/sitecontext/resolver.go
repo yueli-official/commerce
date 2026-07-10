@@ -33,13 +33,19 @@ type Resolver struct {
 	bySite     map[string]Context
 	byClientID map[string]Context
 	maxSkew    time.Duration
+	required   bool
 }
 
 func New(contexts []Context) *Resolver {
+	return NewWithRequired(contexts, false)
+}
+
+func NewWithRequired(contexts []Context, required bool) *Resolver {
 	resolver := &Resolver{
 		bySite:     make(map[string]Context, len(contexts)),
 		byClientID: map[string]Context{},
 		maxSkew:    defaultMaxSkew,
+		required:   required,
 	}
 	ambiguousClients := map[string]bool{}
 	for _, item := range contexts {
@@ -150,6 +156,9 @@ func (r *Resolver) RequireSite(ctx context.Context, requested string) (string, e
 	}
 	requested = normalize(requested)
 	if r != nil {
+		if r.required {
+			return "", ErrTrustedContextRequired
+		}
 		if _, managed := r.bySite[requested]; managed {
 			return "", ErrTrustedContextRequired
 		}
