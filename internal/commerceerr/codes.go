@@ -58,6 +58,10 @@ func Forbidden() *errs.Coded {
 	return errs.New(CodeForbidden, "order does not belong to this subscriber", nil)
 }
 
+func SiteContextForbidden() *errs.Coded {
+	return errs.New(CodeForbidden, "trusted site context is required", nil)
+}
+
 // GatewayFailed returns a Coded error for a payment gateway failure.
 func GatewayFailed(summary string) *errs.Coded {
 	return errs.New(CodeGatewayFailed, summary, nil)

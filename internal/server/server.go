@@ -12,6 +12,7 @@ import (
 	"platform/services/commerce/internal/controller"
 	"platform/services/commerce/internal/dao"
 	"platform/services/commerce/internal/service"
+	"platform/services/commerce/internal/sitecontext"
 )
 
 // Deps are the wiring dependencies for the commerce server.
@@ -28,6 +29,7 @@ type Deps struct {
 	Asset           service.AssetDeliveryClient
 	CurrentDelivery service.CurrentDeliveryResolver
 	CurrentCheckout service.CurrentCheckoutItemResolver
+	SiteContext     *sitecontext.Resolver
 }
 
 // Configure mounts the commerce-service routes onto s.
@@ -79,21 +81,21 @@ func Configure(s *ghttp.Server, d Deps) {
 	// ── Public/optional-auth: virtual-goods checkout ─────────────────────────
 	// Guest buyers identify by email; logged-in buyers get their subject from an
 	// optional Bearer token injected by the app BFF.
-	checkoutCtrl := controller.NewCheckout(svc, d.Registry, d.NotifyURL, d.ReturnURL)
+	checkoutCtrl := controller.NewCheckout(svc, d.Registry, d.NotifyURL, d.ReturnURL, d.SiteContext)
 	paymentConfigCtrl := controller.NewPaymentConfig(svc, d.Registry)
 	s.Group("/", func(grp *ghttp.RouterGroup) {
-		grp.Middleware(ghttpx.Middleware, authjwt.OptionalMiddleware(d.Verifier))
+		grp.Middleware(ghttpx.Middleware, authjwt.OptionalMiddleware(d.Verifier), sitecontext.Middleware(d.SiteContext))
 		grp.Bind(checkoutCtrl)
 		grp.Bind(paymentConfigCtrl)
 	})
 
 	// ── Protected: JWT-required routes ──────────────────────────────────────
-	accessCtrl := controller.NewAccess(svc)
+	accessCtrl := controller.NewAccess(svc, d.SiteContext)
 	checkinCtrl := controller.NewCheckin(svc)
 	creditsCtrl := controller.NewCredits(svc)
 	adminOrderCtrl := controller.NewAdminOrder(svc, d.Registry)
 	s.Group("/", func(grp *ghttp.RouterGroup) {
-		grp.Middleware(ghttpx.Middleware, authjwt.Middleware(d.Verifier))
+		grp.Middleware(ghttpx.Middleware, authjwt.Middleware(d.Verifier), sitecontext.Middleware(d.SiteContext))
 		grp.Bind(accessCtrl)
 		grp.Bind(checkinCtrl)
 		grp.Bind(creditsCtrl)

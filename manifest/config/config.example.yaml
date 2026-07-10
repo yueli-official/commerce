@@ -58,6 +58,15 @@ commerce:
     # purchases before signing current delivery.
     base_url: "http://localhost:8088"
 
+  # Managed Shop instances. Browser requests reach Commerce through the Shop
+  # BFF, which signs a short-lived assertion with the same secret. Store real
+  # assertion secrets in the deployment secret manager, never in Git.
+  trustedSiteContexts:
+    shop-ae:
+      clientIds: ["shop-ae-web"]
+      assertionSecret: ""
+      shopBaseUrl: "http://shop-ae-api:8088"
+
   notificationService:
     # Optional for local dev, required if delivery-ready emails should be sent.
     base_url: "http://localhost:8089"

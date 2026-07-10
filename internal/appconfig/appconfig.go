@@ -4,6 +4,7 @@ package appconfig
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -12,6 +13,7 @@ import (
 	"platform/services/commerce/internal/notificationclient"
 	"platform/services/commerce/internal/service"
 	"platform/services/commerce/internal/shopclient"
+	"platform/services/commerce/internal/sitecontext"
 )
 
 // JWKS holds the IdP key/issuer config for the authjwt verifier.
@@ -127,11 +129,26 @@ func BuildAssetDeliveryClient(ctx context.Context) service.AssetDeliveryClient {
 }
 
 type currentDeliveryAdapter struct {
-	client *shopclient.Client
+	clients  map[string]*shopclient.Client
+	fallback *shopclient.Client
+}
+
+func (a currentDeliveryAdapter) client(siteKey string) (*shopclient.Client, error) {
+	if client := a.clients[siteKey]; client != nil {
+		return client, nil
+	}
+	if a.fallback != nil {
+		return a.fallback, nil
+	}
+	return nil, fmt.Errorf("shop service is not configured for site %q", siteKey)
 }
 
 func (a currentDeliveryAdapter) CurrentDelivery(ctx context.Context, in service.CurrentDeliveryInput) (service.CurrentDeliveryResult, error) {
-	out, err := a.client.CurrentDelivery(ctx, shopclient.CurrentDeliveryInput{
+	client, err := a.client(in.SiteKey)
+	if err != nil {
+		return service.CurrentDeliveryResult{}, err
+	}
+	out, err := client.CurrentDelivery(ctx, shopclient.CurrentDeliveryInput{
 		SiteKey: in.SiteKey, ExternalID: in.ExternalID, VariantID: in.VariantID,
 	})
 	if err != nil {
@@ -141,7 +158,11 @@ func (a currentDeliveryAdapter) CurrentDelivery(ctx context.Context, in service.
 }
 
 func (a currentDeliveryAdapter) CurrentCheckoutItem(ctx context.Context, in service.CurrentCheckoutItemInput) (service.CurrentCheckoutItemResult, error) {
-	out, err := a.client.CurrentCheckoutItem(ctx, shopclient.CurrentDeliveryInput{
+	client, err := a.client(in.SiteKey)
+	if err != nil {
+		return service.CurrentCheckoutItemResult{}, err
+	}
+	out, err := client.CurrentCheckoutItem(ctx, shopclient.CurrentDeliveryInput{
 		SiteKey: in.SiteKey, ExternalID: in.ExternalID, VariantID: in.VariantID,
 	})
 	if err != nil {
@@ -163,18 +184,46 @@ func (a currentDeliveryAdapter) CurrentCheckoutItem(ctx context.Context, in serv
 	}, nil
 }
 
-func BuildCurrentDeliveryResolver(ctx context.Context) service.CurrentDeliveryResolver {
-	cfg := shopclient.Config{
-		BaseURL: g.Cfg().MustGet(ctx, "commerce.shopService.base_url").String(),
+func LoadSiteContext(ctx context.Context) *sitecontext.Resolver {
+	var contexts []sitecontext.Context
+	for siteKey, raw := range g.Cfg().MustGet(ctx, "commerce.trustedSiteContexts").Map() {
+		value := g.NewVar(raw).Map()
+		contexts = append(contexts, sitecontext.Context{
+			SiteKey:         siteKey,
+			ClientIDs:       g.NewVar(value["clientIds"]).Strings(),
+			AssertionSecret: g.NewVar(value["assertionSecret"]).String(),
+			ShopBaseURL:     g.NewVar(value["shopBaseUrl"]).String(),
+		})
 	}
-	if cfg.BaseURL == "" {
+	return sitecontext.New(contexts)
+}
+
+func BuildCurrentDeliveryResolver(ctx context.Context, sites ...*sitecontext.Resolver) service.CurrentDeliveryResolver {
+	adapter := currentDeliveryAdapter{clients: map[string]*shopclient.Client{}}
+	if len(sites) > 0 && sites[0] != nil {
+		for _, item := range sites[0].Contexts() {
+			if item.ShopBaseURL == "" {
+				panic(fmt.Errorf("commerce trusted site %q requires shopBaseUrl", item.SiteKey))
+			}
+			client, err := shopclient.New(shopclient.Config{BaseURL: item.ShopBaseURL})
+			if err != nil {
+				panic(err)
+			}
+			adapter.clients[item.SiteKey] = client
+		}
+	}
+	fallbackURL := g.Cfg().MustGet(ctx, "commerce.shopService.base_url").String()
+	if fallbackURL != "" {
+		client, err := shopclient.New(shopclient.Config{BaseURL: fallbackURL})
+		if err != nil {
+			panic(err)
+		}
+		adapter.fallback = client
+	}
+	if len(adapter.clients) == 0 && adapter.fallback == nil {
 		return nil
 	}
-	client, err := shopclient.New(cfg)
-	if err != nil {
-		panic(err)
-	}
-	return currentDeliveryAdapter{client: client}
+	return adapter
 }
 
 // Alipay holds the Alipay payment provider config.

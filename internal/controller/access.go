@@ -8,16 +8,22 @@ import (
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/service"
+	"platform/services/commerce/internal/sitecontext"
 )
 
 // Access handles GET /api/v1/access.
 type Access struct {
-	svc *service.Service
+	svc   *service.Service
+	sites *sitecontext.Resolver
 }
 
 // NewAccess constructs an Access controller.
-func NewAccess(svc *service.Service) *Access {
-	return &Access{svc: svc}
+func NewAccess(svc *service.Service, sites ...*sitecontext.Resolver) *Access {
+	var siteResolver *sitecontext.Resolver
+	if len(sites) > 0 {
+		siteResolver = sites[0]
+	}
+	return &Access{svc: svc, sites: siteResolver}
 }
 
 // Entitled handles GET /api/v1/access?siteKey=&externalId= (user JWT required).
@@ -27,7 +33,15 @@ func (c *Access) Entitled(ctx context.Context, req *v1.EntitledReq) (*v1.Entitle
 		return nil, errs.New(commerceerr.CodeForbidden, "missing principal", nil)
 	}
 
-	result, err := c.svc.Entitled(ctx, p.Subject, req.SiteKey, req.ExternalID)
+	siteKey := req.SiteKey
+	if c.sites != nil {
+		var err error
+		siteKey, err = c.sites.RequireSite(ctx, siteKey)
+		if err != nil {
+			return nil, commerceerr.SiteContextForbidden()
+		}
+	}
+	result, err := c.svc.Entitled(ctx, p.Subject, siteKey, req.ExternalID)
 	if err != nil {
 		return nil, err
 	}

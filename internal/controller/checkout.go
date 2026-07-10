@@ -14,6 +14,7 @@ import (
 	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/model"
 	"platform/services/commerce/internal/service"
+	"platform/services/commerce/internal/sitecontext"
 )
 
 type Checkout struct {
@@ -21,10 +22,15 @@ type Checkout struct {
 	registry  paykit.Registry
 	notifyURL string
 	returnURL string
+	sites     *sitecontext.Resolver
 }
 
-func NewCheckout(svc *service.Service, reg paykit.Registry, notifyURL, returnURL string) *Checkout {
-	return &Checkout{svc: svc, registry: reg, notifyURL: notifyURL, returnURL: returnURL}
+func NewCheckout(svc *service.Service, reg paykit.Registry, notifyURL, returnURL string, sites ...*sitecontext.Resolver) *Checkout {
+	var siteResolver *sitecontext.Resolver
+	if len(sites) > 0 {
+		siteResolver = sites[0]
+	}
+	return &Checkout{svc: svc, registry: reg, notifyURL: notifyURL, returnURL: returnURL, sites: siteResolver}
 }
 
 func defaultString(value, fallback string) string {
@@ -57,7 +63,11 @@ func (c *Checkout) CreateCheckout(ctx context.Context, req *v1.CreateCheckoutReq
 	if p, ok := authjwt.From(ctx); ok && p != nil {
 		desc.BuyerSub = p.Subject
 	}
-	desc.Items = checkoutItems(req.Items)
+	items, err := checkoutItems(ctx, c.sites, req.Items)
+	if err != nil {
+		return nil, commerceerr.SiteContextForbidden()
+	}
+	desc.Items = items
 
 	order, err := c.svc.CreateCheckout(ctx, desc)
 	if err != nil {
@@ -98,9 +108,13 @@ func (c *Checkout) CreatePointsCheckout(ctx context.Context, req *v1.CreatePoint
 	if !ok || p == nil {
 		return nil, commerceerr.Forbidden()
 	}
+	items, err := checkoutItems(ctx, c.sites, req.Items)
+	if err != nil {
+		return nil, commerceerr.SiteContextForbidden()
+	}
 	res, err := c.svc.RedeemCheckout(ctx, service.CheckoutDesc{
 		BuyerSub: p.Subject, BuyerEmail: strings.TrimSpace(req.BuyerEmail), Provider: model.ProductKindPoints,
-		Items: checkoutItems(req.Items),
+		Items: items,
 	})
 	if err != nil {
 		return nil, err
@@ -116,9 +130,13 @@ func (c *Checkout) CreateFreeCheckout(ctx context.Context, req *v1.CreateFreeChe
 	if p, ok := authjwt.From(ctx); ok && p != nil {
 		buyerSub = p.Subject
 	}
+	items, err := checkoutItems(ctx, c.sites, req.Items)
+	if err != nil {
+		return nil, commerceerr.SiteContextForbidden()
+	}
 	res, err := c.svc.ClaimFreeCheckout(ctx, service.CheckoutDesc{
 		BuyerSub: buyerSub, BuyerEmail: strings.TrimSpace(req.BuyerEmail), Provider: model.ProductKindFree,
-		Items: checkoutItems(req.Items),
+		Items: items,
 	})
 	if err != nil {
 		return nil, err
@@ -329,17 +347,25 @@ func (c *Checkout) MyPurchaseDownload(ctx context.Context, req *v1.MyPurchaseDow
 	}, nil
 }
 
-func checkoutItems(items []v1.CheckoutItemReq) []service.CheckoutItemDesc {
+func checkoutItems(ctx context.Context, sites *sitecontext.Resolver, items []v1.CheckoutItemReq) ([]service.CheckoutItemDesc, error) {
 	out := make([]service.CheckoutItemDesc, 0, len(items))
 	for _, item := range items {
+		siteKey := item.SiteKey
+		if sites != nil {
+			var err error
+			siteKey, err = sites.RequireSite(ctx, siteKey)
+			if err != nil {
+				return nil, err
+			}
+		}
 		out = append(out, service.CheckoutItemDesc{
-			SiteKey: item.SiteKey, ExternalID: item.ExternalID, VariantID: item.VariantID,
+			SiteKey: siteKey, ExternalID: item.ExternalID, VariantID: item.VariantID,
 			Title: item.Title, VariantTitle: item.VariantTitle, SKU: item.SKU,
 			PriceCents: item.PriceCents, PointsCost: item.PointsCost, Currency: item.Currency,
 			DeliveryKind: item.DeliveryKind, DeliveryRef: item.DeliveryRef, PurchaseLimitPerBuyer: item.PurchaseLimitPerBuyer, Quantity: item.Quantity,
 		})
 	}
-	return out
+	return out, nil
 }
 
 func deliveryView(delivery *service.DeliveryResult) v1.DeliveryView {
