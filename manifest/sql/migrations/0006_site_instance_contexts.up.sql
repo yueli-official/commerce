@@ -1,3 +1,4 @@
+-- migrate:irreversible
 -- Refuse an ambiguous merge. Product ids are referenced by orders and
 -- entitlements, so silently deleting either row would corrupt ownership.
 DO $$
@@ -33,4 +34,3 @@ SET site_key = CASE site_key
     ELSE site_key
 END
 WHERE site_key IN ('shop', 'resource');
-
