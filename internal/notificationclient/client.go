@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"platform/gokit/observability"
 )
 
 type Config struct {
@@ -60,6 +62,7 @@ func New(cfg Config) (*Client, error) {
 	if cli == nil {
 		cli = &http.Client{Timeout: 5 * time.Second}
 	}
+	cli = observability.HTTPClient(cli)
 	scope := strings.TrimSpace(cfg.Scope)
 	if scope == "" {
 		scope = "notification:send"

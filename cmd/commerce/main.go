@@ -3,6 +3,8 @@ package main
 
 import (
 	"log"
+	"net/http"
+	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gctx"
@@ -10,6 +12,7 @@ import (
 	_ "github.com/gogf/gf/contrib/drivers/pgsql/v2"
 
 	"platform/gokit/authjwt"
+	"platform/gokit/observability"
 	"platform/gokit/openapiexport"
 	"platform/paykit"
 	payalipay "platform/paykit/providers/alipay"
@@ -22,6 +25,11 @@ import (
 
 func main() {
 	ctx := gctx.New()
+	shutdown, err := observability.StartFromEnvironment(ctx, "commerce-api")
+	if err != nil {
+		panic(err)
+	}
+	defer observability.ShutdownWithTimeout(shutdown)
 
 	jw := appconfig.LoadJWKS(ctx)
 	verifier, err := authjwt.NewVerifier(authjwt.VerifierConfig{
@@ -88,12 +96,14 @@ func main() {
 
 func buildGatewayRegistry(alipayCfg appconfig.Alipay, paypalCfg appconfig.PayPal, wechatCfg appconfig.WeChat) (paykit.Registry, error) {
 	reg := paykit.NewRegistry()
+	providerHTTPClient := observability.HTTPClient(&http.Client{Timeout: 15 * time.Second})
 	if alipayCfg.AppID != "" && alipayCfg.PrivateKey != "" {
 		alipayGW, err := payalipay.NewProvider(payalipay.Config{
 			AppID:           alipayCfg.AppID,
 			PrivateKey:      alipayCfg.PrivateKey,
 			AlipayPublicKey: alipayCfg.AlipayPublicKey,
 			Sandbox:         alipayCfg.Sandbox,
+			HTTPClient:      providerHTTPClient,
 		})
 		if err != nil {
 			return nil, err
@@ -108,6 +118,7 @@ func buildGatewayRegistry(alipayCfg appconfig.Alipay, paypalCfg appconfig.PayPal
 			ClientSecret: paypalCfg.ClientSecret,
 			Sandbox:      paypalCfg.Sandbox,
 			BaseURL:      paypalCfg.BaseURL,
+			HTTPClient:   providerHTTPClient,
 		})
 		if err != nil {
 			return nil, err
@@ -125,6 +136,7 @@ func buildGatewayRegistry(alipayCfg appconfig.Alipay, paypalCfg appconfig.PayPal
 			PrivateKey:       wechatCfg.PrivateKey,
 			AppID:            wechatCfg.AppID,
 			NotifyURL:        wechatCfg.NotifyURL,
+			HTTPClient:       providerHTTPClient,
 		})
 		if err != nil {
 			return nil, err

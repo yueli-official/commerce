@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"platform/gokit/observability"
 )
 
 type Config struct {
@@ -55,6 +57,7 @@ func New(cfg Config) (*Client, error) {
 	if cli == nil {
 		cli = http.DefaultClient
 	}
+	cli = observability.HTTPClient(cli)
 	scope := strings.TrimSpace(cfg.Scope)
 	if scope == "" {
 		scope = "asset:sign"

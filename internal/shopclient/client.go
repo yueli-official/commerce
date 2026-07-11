@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"platform/gokit/observability"
 )
 
 type Config struct {
@@ -55,6 +57,7 @@ func New(cfg Config) (*Client, error) {
 	if cli == nil {
 		cli = http.DefaultClient
 	}
+	cli = observability.HTTPClient(cli)
 	return &Client{base: base, http: cli}, nil
 }
 

@@ -35,6 +35,7 @@ type Deps struct {
 
 // Configure mounts the commerce-service routes onto s.
 func Configure(s *ghttp.Server, d Deps) {
+	s.Use(ghttpx.TraceRouteMiddleware)
 	currentCheckout := d.CurrentCheckout
 	if currentCheckout == nil && d.CurrentDelivery != nil {
 		if resolver, ok := d.CurrentDelivery.(service.CurrentCheckoutItemResolver); ok {
