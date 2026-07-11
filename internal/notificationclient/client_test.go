@@ -13,11 +13,21 @@ import (
 func TestClientSendsNotificationEnvelope(t *testing.T) {
 	var saw bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/oauth2/token" {
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if r.Form.Get("client_id") != "commerce-notification-svc" || r.Form.Get("client_secret") != "secret" || r.Form.Get("scope") != "notification:send" {
+				t.Fatalf("unexpected token request: %v", r.Form)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "notification-token"})
+			return
+		}
 		saw = true
 		if r.URL.Path != "/api/v1/notifications/send" {
 			t.Fatalf("path = %s", r.URL.Path)
 		}
-		if got := r.Header.Get("X-Notification-Token"); got != "secret" {
+		if got := r.Header.Get("Authorization"); got != "Bearer notification-token" {
 			t.Fatalf("token header = %q", got)
 		}
 		var body notificationclient.SendInput
@@ -34,7 +44,7 @@ func TestClientSendsNotificationEnvelope(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cli, err := notificationclient.New(notificationclient.Config{BaseURL: srv.URL, APIToken: "secret"})
+	cli, err := notificationclient.New(notificationclient.Config{BaseURL: srv.URL, TokenURL: srv.URL + "/oauth2/token", ClientID: "commerce-notification-svc", ClientSecret: "secret", Scope: "notification:send"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

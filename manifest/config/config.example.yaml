@@ -26,7 +26,7 @@ commerce:
   jwks:
     url: "http://localhost:8081/oauth2/jwks.json"
     issuer: "http://localhost:8081"
-    audience: ""            # "" disables the audience check
+    audience: "commerce-api"
 
   devSettle: false          # true → auto-settle orders without real payment (dev only)
   gateways: [alipay, wechat, paypal]
@@ -50,7 +50,7 @@ commerce:
     # asset-service delivery URL instead of only validating the commerce token.
     base_url: "http://localhost:8082"
     token_url: "http://localhost:8081/oauth2/token"
-    client_id: ""
+    client_id: "commerce-asset-svc"
     client_secret: ""
     scope: "asset:sign"
 
@@ -73,7 +73,10 @@ commerce:
   notificationService:
     # Optional for local dev, required if delivery-ready emails should be sent.
     base_url: "http://localhost:8089"
-    api_token: ""
+    token_url: "http://localhost:8081/oauth2/token"
+    client_id: "commerce-notification-svc"
+    client_secret: ""
+    scope: "notification:send"
 
   alipay:
     app_id: ""

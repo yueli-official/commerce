@@ -5,6 +5,7 @@ package appconfig
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -56,11 +57,14 @@ func LoadDelivery(ctx context.Context) service.DeliveryConfig {
 // sends a scene notification; provider/channel details live in notification.
 func BuildDeliveryMailer(ctx context.Context) service.DeliveryMailer {
 	cfg := notificationclient.Config{
-		BaseURL:  g.Cfg().MustGet(ctx, "commerce.notificationService.base_url").String(),
-		APIToken: g.Cfg().MustGet(ctx, "commerce.notificationService.api_token").String(),
+		BaseURL:      g.Cfg().MustGet(ctx, "commerce.notificationService.base_url").String(),
+		TokenURL:     g.Cfg().MustGet(ctx, "commerce.notificationService.token_url").String(),
+		ClientID:     g.Cfg().MustGet(ctx, "commerce.notificationService.client_id").String(),
+		ClientSecret: g.Cfg().MustGet(ctx, "commerce.notificationService.client_secret").String(),
+		Scope:        g.Cfg().MustGet(ctx, "commerce.notificationService.scope", "notification:send").String(),
 	}
-	if cfg.BaseURL == "" {
-		g.Log().Warning(ctx, "commerce.notificationService.base_url is empty; delivery notification email disabled")
+	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.TokenURL) == "" || strings.TrimSpace(cfg.ClientID) == "" || strings.TrimSpace(cfg.ClientSecret) == "" {
+		g.Log().Warning(ctx, "commerce.notificationService OAuth config is incomplete; delivery notification email disabled")
 		return nil
 	}
 	client, err := notificationclient.New(cfg)

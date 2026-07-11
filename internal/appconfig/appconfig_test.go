@@ -13,6 +13,10 @@ import (
 
 func TestNotificationDeliverySenderSwallowsProviderFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/oauth2/token" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "notification-token"})
+			return
+		}
 		if r.URL.Path != "/api/v1/notifications/send" {
 			t.Fatalf("path = %s", r.URL.Path)
 		}
@@ -24,7 +28,7 @@ func TestNotificationDeliverySenderSwallowsProviderFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := notificationclient.New(notificationclient.Config{BaseURL: srv.URL})
+	client, err := notificationclient.New(notificationclient.Config{BaseURL: srv.URL, TokenURL: srv.URL + "/oauth2/token", ClientID: "commerce-notification-svc", ClientSecret: "secret"})
 	if err != nil {
 		t.Fatalf("New notification client: %v", err)
 	}
