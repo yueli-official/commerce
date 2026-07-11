@@ -10,6 +10,7 @@ import (
 	_ "github.com/gogf/gf/contrib/drivers/pgsql/v2"
 
 	"platform/gokit/authjwt"
+	"platform/gokit/openapiexport"
 	"platform/paykit"
 	payalipay "platform/paykit/providers/alipay"
 	paypal "platform/paykit/providers/paypal"
@@ -75,6 +76,12 @@ func main() {
 		CurrentDelivery: currentDelivery,
 		SiteContext:     siteResolver,
 	})
+	if handled, err := openapiexport.ExportIfRequested(s); handled {
+		if err != nil {
+			panic(err)
+		}
+		return
+	}
 	g.Log().Info(ctx, "commerce-service starting")
 	s.Run()
 }
