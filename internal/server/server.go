@@ -7,6 +7,7 @@ import (
 
 	"platform/gokit/authjwt"
 	"platform/gokit/ghttpx"
+	"platform/gokit/healthcheck"
 	"platform/gokit/response"
 	"platform/paykit"
 	"platform/services/commerce/internal/controller"
@@ -56,6 +57,7 @@ func Configure(s *ghttp.Server, d Deps) {
 		grp.GET("/healthz", func(r *ghttp.Request) {
 			r.Response.WriteJson(response.OK(map[string]any{"status": "up"}))
 		})
+		grp.GET("/readyz", healthcheck.Handler(map[string]healthcheck.Check{"database": healthcheck.Database}))
 	})
 
 	// ── Public: payment async notify (no JWT; provider-native response) ─────
