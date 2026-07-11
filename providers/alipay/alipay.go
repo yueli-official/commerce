@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ type Config struct {
 	PrivateKey      string
 	AlipayPublicKey string
 	Sandbox         bool
+	HTTPClient      *http.Client
 }
 
 // alipayProvider implements PaymentGateway using the Alipay page-pay flow.
@@ -38,7 +40,7 @@ func NewProvider(cfg Config) (paykit.Provider, error) {
 	privateKey := normalizeAlipayKey(cfg.PrivateKey)
 	publicKey := normalizeAlipayKey(cfg.AlipayPublicKey)
 
-	client, err := smartalipay.New(cfg.AppID, privateKey, !cfg.Sandbox)
+	client, err := smartalipay.New(cfg.AppID, privateKey, !cfg.Sandbox, smartalipay.WithHTTPClient(cfg.HTTPClient))
 	if err != nil {
 		return nil, fmt.Errorf("init alipay client: %w", err)
 	}

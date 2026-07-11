@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	wechatCore "github.com/wechatpay-apiv3/wechatpay-go/core"
+	"github.com/wechatpay-apiv3/wechatpay-go/core/auth/signers"
+	"github.com/wechatpay-apiv3/wechatpay-go/core/auth/validators"
 	"github.com/wechatpay-apiv3/wechatpay-go/core/auth/verifiers"
 	"github.com/wechatpay-apiv3/wechatpay-go/core/downloader"
 	"github.com/wechatpay-apiv3/wechatpay-go/core/notify"
@@ -28,6 +30,7 @@ type Config struct {
 	PrivateKey       string
 	AppID            string
 	NotifyURL        string
+	HTTPClient       *http.Client
 }
 
 type wechatProvider struct {
@@ -79,12 +82,23 @@ func NewProvider(cfg Config) (paykit.Provider, error) {
 	ctx := context.Background()
 	mgr := downloader.MgrInstance()
 	if !mgr.HasDownloader(ctx, cfg.MerchantID) {
-		if err := mgr.RegisterDownloaderWithPrivateKey(ctx, privateKey, cfg.MerchantCertSN, cfg.MerchantID, cfg.MerchantAPIv3Key); err != nil {
+		downloaderClient, err := wechatCore.NewClientWithDialSettings(ctx, &wechatCore.DialSettings{
+			HTTPClient: cfg.HTTPClient,
+			Signer: &signers.SHA256WithRSASigner{
+				MchID: cfg.MerchantID, CertificateSerialNo: cfg.MerchantCertSN, PrivateKey: privateKey,
+			},
+			Validator: &validators.NullValidator{},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("init wechat certificate client: %w", err)
+		}
+		if err := mgr.RegisterDownloaderWithClient(ctx, downloaderClient, cfg.MerchantID, cfg.MerchantAPIv3Key); err != nil {
 			return nil, fmt.Errorf("register wechat certificate downloader: %w", err)
 		}
 	}
 	client, err := wechatCore.NewClient(ctx,
 		option.WithWechatPayAutoAuthCipherUsingDownloaderMgr(cfg.MerchantID, cfg.MerchantCertSN, privateKey, mgr),
+		option.WithHTTPClient(cfg.HTTPClient),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("init wechat pay client: %w", err)
