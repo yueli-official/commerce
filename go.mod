@@ -1,6 +1,6 @@
 module platform/paykit
 
-go 1.23.0
+go 1.26.5
 
 require (
 	github.com/smartwalle/alipay/v3 v3.2.25
