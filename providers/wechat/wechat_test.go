@@ -2,15 +2,29 @@ package wechat
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
 	"platform/paykit"
 
+	wechatCore "github.com/wechatpay-apiv3/wechatpay-go/core"
 	"github.com/wechatpay-apiv3/wechatpay-go/services/payments"
 	"github.com/wechatpay-apiv3/wechatpay-go/services/payments/native"
 	"github.com/wechatpay-apiv3/wechatpay-go/services/refunddomestic"
 )
+
+func TestWeChatHealthCheckTreatsMissingSyntheticOrderAsHealthy(t *testing.T) {
+	healthSvc := &fakeWeChatHealthService{result: &wechatCore.APIResult{Response: &http.Response{StatusCode: http.StatusNotFound}}, err: errors.New("order not found")}
+	gateway := &wechatProvider{merchantID: "mch-1", healthSvc: healthSvc}
+	if err := gateway.CheckHealth(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if healthSvc.calls != 1 {
+		t.Fatalf("health calls = %d, want 1", healthSvc.calls)
+	}
+}
 
 func TestNewProviderValidatesConfig(t *testing.T) {
 	_, err := NewProvider(Config{})
@@ -142,6 +156,17 @@ type fakeWeChatRefundService struct {
 	lastCreate refunddomestic.CreateRequest
 	refund     *refunddomestic.Refund
 	err        error
+}
+
+type fakeWeChatHealthService struct {
+	result *wechatCore.APIResult
+	err    error
+	calls  int
+}
+
+func (service *fakeWeChatHealthService) QueryOrderByOutTradeNo(context.Context, native.QueryOrderByOutTradeNoRequest) (*payments.Transaction, *wechatCore.APIResult, error) {
+	service.calls++
+	return nil, service.result, service.err
 }
 
 func (f *fakeWeChatRefundService) Create(ctx context.Context, req refunddomestic.CreateRequest) (*refunddomestic.Refund, error) {

@@ -50,3 +50,12 @@ func TestQueryOutFromTradeQueryAmountMismatch(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestHealthQueryAcceptsAuthenticatedMissingOrder(t *testing.T) {
+	if !healthQuerySucceeded(&smartalipay.TradeQueryRsp{Error: smartalipay.Error{SubCode: "ACQ.TRADE_NOT_EXIST"}}) {
+		t.Fatal("authenticated missing synthetic order should prove provider health")
+	}
+	if healthQuerySucceeded(&smartalipay.TradeQueryRsp{Error: smartalipay.Error{Code: "40004", SubCode: "ACQ.INVALID_PARAMETER"}}) {
+		t.Fatal("unexpected provider error accepted as healthy")
+	}
+}

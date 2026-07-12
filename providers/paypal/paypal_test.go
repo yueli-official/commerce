@@ -105,6 +105,32 @@ func TestPayPalCreatePaymentCreatesOrder(t *testing.T) {
 	}
 }
 
+func TestPayPalHealthCheckOnlyRequestsOAuthToken(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		requests++
+		if request.URL.Path != "/v1/oauth2/token" || request.Method != http.MethodPost {
+			t.Fatalf("health request = %s %s", request.Method, request.URL.Path)
+		}
+		writeJSON(t, w, map[string]any{"access_token": "health-token"})
+	}))
+	defer server.Close()
+	gateway, err := paypal.NewProvider(paypal.Config{ClientID: "client", ClientSecret: "secret", BaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checker, ok := gateway.(paykit.HealthChecker)
+	if !ok {
+		t.Fatal("paypal provider does not implement HealthChecker")
+	}
+	if err := checker.CheckHealth(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("health requests = %d, want 1", requests)
+	}
+}
+
 func TestPayPalCapturePaymentCapturesApprovedOrder(t *testing.T) {
 	srv := paypalTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v2/checkout/orders/PAYPAL-ORDER-1/capture" {

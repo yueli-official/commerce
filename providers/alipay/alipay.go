@@ -34,6 +34,24 @@ func (p *alipayProvider) Name() string {
 	return "alipay"
 }
 
+func (p *alipayProvider) CheckHealth(ctx context.Context) error {
+	rsp, err := p.client.TradeQuery(ctx, smartalipay.TradeQuery{OutTradeNo: "platform-health-check-nonexistent"})
+	if err != nil {
+		return fmt.Errorf("alipay health query: %w", err)
+	}
+	if rsp == nil {
+		return fmt.Errorf("alipay health query returned empty response")
+	}
+	if healthQuerySucceeded(rsp) {
+		return nil
+	}
+	return fmt.Errorf("alipay health query failed: %s %s", rsp.Code, rsp.SubCode)
+}
+
+func healthQuerySucceeded(response *smartalipay.TradeQueryRsp) bool {
+	return response != nil && (response.IsSuccess() || strings.EqualFold(response.SubCode, "ACQ.TRADE_NOT_EXIST"))
+}
+
 // NewProvider constructs an alipayProvider from the given config, loading
 // the Alipay public key needed to verify async-notify signatures.
 func NewProvider(cfg Config) (paykit.Provider, error) {

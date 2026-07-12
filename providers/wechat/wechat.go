@@ -40,6 +40,7 @@ type wechatProvider struct {
 	nativeSvc  wechatNativeService
 	refundSvc  wechatRefundService
 	notifySvc  wechatNotifyService
+	healthSvc  wechatHealthService
 }
 
 func (p *wechatProvider) Name() string {
@@ -56,6 +57,10 @@ type wechatRefundService interface {
 
 type wechatNotifyService interface {
 	Verify(context.Context, []byte, map[string]string) (*payments.Transaction, error)
+}
+
+type wechatHealthService interface {
+	QueryOrderByOutTradeNo(context.Context, native.QueryOrderByOutTradeNoRequest) (*payments.Transaction, *wechatCore.APIResult, error)
 }
 
 func NewProvider(cfg Config) (paykit.Provider, error) {
@@ -118,7 +123,24 @@ func NewProvider(cfg Config) (paykit.Provider, error) {
 		nativeSvc:  &wechatNativeAPI{svc: &native.NativeApiService{Client: client}},
 		refundSvc:  &wechatRefundAPI{svc: &refunddomestic.RefundsApiService{Client: client}},
 		notifySvc:  &wechatNotifyVerifier{handler: notifyHandler},
+		healthSvc:  &native.NativeApiService{Client: client},
 	}, nil
+}
+
+func (p *wechatProvider) CheckHealth(ctx context.Context) error {
+	if p.healthSvc == nil {
+		return fmt.Errorf("wechat health service is not configured")
+	}
+	_, result, err := p.healthSvc.QueryOrderByOutTradeNo(ctx, native.QueryOrderByOutTradeNoRequest{
+		OutTradeNo: wechatCore.String("platform-health-check-nonexistent"), Mchid: wechatCore.String(p.merchantID),
+	})
+	if err == nil {
+		return nil
+	}
+	if result != nil && result.Response != nil && result.Response.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	return fmt.Errorf("wechat health query: %w", err)
 }
 
 func (p *wechatProvider) CreatePayment(ctx context.Context, in paykit.CreatePaymentIn) (*paykit.CreatePaymentOut, error) {

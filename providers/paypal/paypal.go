@@ -40,6 +40,11 @@ func (p *paypalProvider) Name() string {
 	return "paypal"
 }
 
+func (p *paypalProvider) CheckHealth(ctx context.Context) error {
+	_, err := p.accessToken(ctx)
+	return err
+}
+
 func NewProvider(cfg Config) (paykit.Provider, error) {
 	if strings.TrimSpace(cfg.ClientID) == "" {
 		return nil, fmt.Errorf("paypal client id is required")

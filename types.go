@@ -30,6 +30,12 @@ type QueryPaymentProvider interface {
 	QueryPayment(ctx context.Context, in QueryPaymentIn) (*QueryPaymentOut, error)
 }
 
+// HealthChecker verifies credentials and provider connectivity without
+// creating, capturing, refunding, or otherwise mutating a payment.
+type HealthChecker interface {
+	CheckHealth(ctx context.Context) error
+}
+
 type CreatePaymentIn struct {
 	OrderNo     string
 	Subject     string
