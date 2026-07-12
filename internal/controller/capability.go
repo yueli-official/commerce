@@ -80,10 +80,7 @@ func (controller *Capability) ProviderHealthCheck(ctx context.Context, req *v1.A
 	if err != nil {
 		return nil, err
 	}
-	actor := principal.ClientID
-	if actor == "" {
-		actor = principal.Subject
-	}
+	actor := principal.ActorKey()
 	if allowed, _, _ := controller.healthLimiter.Allow(actor + "|" + strings.TrimSpace(req.Key)); !allowed {
 		return nil, commerceerr.HealthCheckRateLimited(req.Key)
 	}
@@ -98,7 +95,7 @@ func (controller *Capability) ProviderHealthCheck(ctx context.Context, req *v1.A
 	defer cancel()
 	startedAt := time.Now()
 	probeErr := controller.registry.CheckHealth(probeCtx, req.Key)
-	g.Log().Info(ctx, "commerce payment provider health check", "provider", strings.TrimSpace(req.Key), "actor", actor, "durationMs", time.Since(startedAt).Milliseconds(), "succeeded", probeErr == nil)
+	g.Log().Info(ctx, "commerce payment provider health check", "provider", strings.TrimSpace(req.Key), "actor", actor, "clientId", principal.ClientID, "durationMs", time.Since(startedAt).Milliseconds(), "succeeded", probeErr == nil)
 	snapshot, err = controller.snapshotAuthorized(ctx)
 	if err != nil {
 		return nil, err
