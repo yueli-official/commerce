@@ -77,21 +77,22 @@ func main() {
 	db := dao.NewPG(g.DB())
 	s := g.Server()
 	server.Configure(s, server.Deps{
-		Verifier:          verifier,
-		DB:                db,
-		Registry:          reg,
-		NotifyURL:         notifyURL,
-		ReturnURL:         returnURL,
-		DevSettle:         devSettle,
-		Checkin:           appconfig.LoadCheckin(ctx),
-		Delivery:          appconfig.LoadDelivery(ctx),
-		Mailer:            appconfig.BuildDeliveryMailer(ctx),
-		Asset:             appconfig.BuildAssetDeliveryClient(ctx),
-		CurrentDelivery:   currentDelivery,
-		SiteContext:       siteResolver,
-		Capabilities:      capabilityRegistry,
-		CapabilityScope:   appconfig.CapabilityScope(ctx),
-		CapabilityService: appconfig.CapabilityServiceMetadata(),
+		Verifier:             verifier,
+		DB:                   db,
+		Registry:             reg,
+		NotifyURL:            notifyURL,
+		ReturnURL:            returnURL,
+		DevSettle:            devSettle,
+		Checkin:              appconfig.LoadCheckin(ctx),
+		Delivery:             appconfig.LoadDelivery(ctx),
+		Mailer:               appconfig.BuildDeliveryMailer(ctx),
+		Asset:                appconfig.BuildAssetDeliveryClient(ctx),
+		CurrentDelivery:      currentDelivery,
+		SiteContext:          siteResolver,
+		Capabilities:         capabilityRegistry,
+		CapabilityScope:      appconfig.CapabilityScope(ctx),
+		CapabilityProbeScope: appconfig.CapabilityProbeScope(ctx),
+		CapabilityService:    appconfig.CapabilityServiceMetadata(),
 	})
 	if handled, err := openapiexport.ExportIfRequested(s); handled {
 		if err != nil {

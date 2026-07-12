@@ -357,6 +357,10 @@ func CapabilityScope(ctx context.Context) string {
 	return g.Cfg().MustGet(ctx, "commerce.capabilityScope", "platform:capabilities:read").String()
 }
 
+func CapabilityProbeScope(ctx context.Context) string {
+	return g.Cfg().MustGet(ctx, "commerce.capabilityProbeScope", "platform:capabilities:probe").String()
+}
+
 func envOrAny(keys []string, fallback string) string {
 	for _, key := range keys {
 		if value := strings.TrimSpace(os.Getenv(key)); value != "" {

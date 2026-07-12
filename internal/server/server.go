@@ -20,22 +20,23 @@ import (
 
 // Deps are the wiring dependencies for the commerce server.
 type Deps struct {
-	Verifier          *authjwt.Verifier
-	DB                *dao.PG
-	Registry          paykit.Registry
-	NotifyURL         string                // base URL for the alipay notify callback
-	ReturnURL         string                // URL the buyer is sent to after paying
-	DevSettle         bool                  // when true, register the /dev/orders/{orderNo}/settle endpoint
-	Checkin           service.CheckinConfig // daily check-in reward curve
-	Delivery          service.DeliveryConfig
-	Mailer            service.DeliveryMailer
-	Asset             service.AssetDeliveryClient
-	CurrentDelivery   service.CurrentDeliveryResolver
-	CurrentCheckout   service.CurrentCheckoutItemResolver
-	SiteContext       *sitecontext.Resolver
-	Capabilities      *paymentcap.Registry
-	CapabilityScope   string
-	CapabilityService capability.ServiceMetadata
+	Verifier             *authjwt.Verifier
+	DB                   *dao.PG
+	Registry             paykit.Registry
+	NotifyURL            string                // base URL for the alipay notify callback
+	ReturnURL            string                // URL the buyer is sent to after paying
+	DevSettle            bool                  // when true, register the /dev/orders/{orderNo}/settle endpoint
+	Checkin              service.CheckinConfig // daily check-in reward curve
+	Delivery             service.DeliveryConfig
+	Mailer               service.DeliveryMailer
+	Asset                service.AssetDeliveryClient
+	CurrentDelivery      service.CurrentDeliveryResolver
+	CurrentCheckout      service.CurrentCheckoutItemResolver
+	SiteContext          *sitecontext.Resolver
+	Capabilities         *paymentcap.Registry
+	CapabilityScope      string
+	CapabilityProbeScope string
+	CapabilityService    capability.ServiceMetadata
 }
 
 // Configure mounts the commerce-service routes onto s.
@@ -67,7 +68,7 @@ func Configure(s *ghttp.Server, d Deps) {
 	})
 
 	if d.Capabilities != nil {
-		capabilityCtrl := controller.NewCapability(svc, d.Capabilities, d.CapabilityService, d.CapabilityScope)
+		capabilityCtrl := controller.NewCapability(svc, d.Capabilities, d.CapabilityService, d.CapabilityScope, d.CapabilityProbeScope)
 		s.Group("/", func(grp *ghttp.RouterGroup) {
 			grp.Middleware(ghttpx.Middleware, authjwt.Middleware(d.Verifier))
 			grp.Bind(capabilityCtrl)

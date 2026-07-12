@@ -94,6 +94,59 @@ func TestManifestRedactsPaymentCredentials(t *testing.T) {
 	}
 }
 
+func TestAggregateUsesOneEnabledProviderPath(t *testing.T) {
+	configured := &healthGateway{FakeProvider: paykit.NewFakeProvider("alipay")}
+	partial := &healthGateway{FakeProvider: paykit.NewFakeProvider("paypal")}
+	registry, err := New(
+		Definition{Instance: "alipay-primary", Adapter: "alipay", Gateway: configured, RequiredConfig: []capability.ConfigField{{Key: "app_id", State: capability.ConfigStatePresent}}},
+		Definition{Instance: "paypal-primary", Adapter: "paypal", Gateway: partial, RequiredConfig: []capability.ConfigField{{Key: "client_id", State: capability.ConfigStatePresent}, {Key: "client_secret", State: capability.ConfigStateMissing, Secret: true}}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := registry.Snapshot(testMetadata(), []MethodState{{Provider: "alipay", Enabled: false}, {Provider: "paypal", Enabled: true}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	payment, _ := snapshot.Capability("commerce.payment")
+	if payment.Configuration != capability.ConfigurationPartial || payment.Enablement != capability.EnablementEnabled {
+		t.Fatalf("aggregate mixed provider paths: %+v", payment)
+	}
+}
+
+func TestProviderDimensionsVaryIndependently(t *testing.T) {
+	partialGateway := &healthGateway{FakeProvider: paykit.NewFakeProvider("alipay")}
+	disabledGateway := &healthGateway{FakeProvider: paykit.NewFakeProvider("wechat")}
+	registry, err := New(
+		Definition{Instance: "paypal-primary", Adapter: "paypal", RequiredConfig: []capability.ConfigField{{Key: "client_id", State: capability.ConfigStatePresent}}},
+		Definition{Instance: "alipay-primary", Adapter: "alipay", Gateway: partialGateway, RequiredConfig: []capability.ConfigField{{Key: "app_id", State: capability.ConfigStatePresent}, {Key: "private_key", State: capability.ConfigStateMissing, Secret: true}}},
+		Definition{Instance: "wechat-primary", Adapter: "wechat", Gateway: disabledGateway, RequiredConfig: []capability.ConfigField{{Key: "merchant_id", State: capability.ConfigStatePresent}}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	methods := []MethodState{{Provider: "paypal", Enabled: true}, {Provider: "alipay", Enabled: true}, {Provider: "wechat", Enabled: false}}
+	if err := registry.CheckHealth(context.Background(), "wechat-primary"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := registry.Snapshot(testMetadata(), methods, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	unregistered, _ := snapshot.Provider("paypal-primary")
+	if unregistered.Registered || unregistered.Configuration != capability.ConfigurationComplete || unregistered.Enablement != capability.EnablementEnabled || unregistered.Effective {
+		t.Fatalf("unregistered dimension collapsed: %+v", unregistered)
+	}
+	partialView, _ := snapshot.Provider("alipay-primary")
+	if !partialView.Registered || partialView.Configuration != capability.ConfigurationPartial || partialView.Enablement != capability.EnablementEnabled || partialView.Effective {
+		t.Fatalf("configured dimension collapsed: %+v", partialView)
+	}
+	disabled, _ := snapshot.Provider("wechat-primary")
+	if !disabled.Registered || disabled.Configuration != capability.ConfigurationComplete || disabled.Enablement != capability.EnablementDisabled || disabled.Health != capability.HealthHealthy || disabled.Effective {
+		t.Fatalf("enablement/health dimensions collapsed: %+v", disabled)
+	}
+}
+
 func testMetadata() capability.ServiceMetadata {
 	return capability.ServiceMetadata{Name: "commerce", Version: "test", BuildSHA: "test", Deployment: "commerce-test"}
 }

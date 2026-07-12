@@ -20,6 +20,7 @@ database:
 
 commerce:
   capabilityScope: "platform:capabilities:read"
+  capabilityProbeScope: "platform:capabilities:probe"
   # Reject checkout/access calls that do not resolve to a registered OAuth
   # client or a valid Shop BFF assertion.
   requireTrustedSiteContext: true

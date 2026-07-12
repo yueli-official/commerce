@@ -20,15 +20,19 @@ type Capability struct {
 	service       *service.Service
 	registry      *paymentcap.Registry
 	metadata      capability.ServiceMetadata
-	scope         string
+	readScope     string
+	probeScope    string
 	healthLimiter *ghttpx.RateLimiter
 }
 
-func NewCapability(service *service.Service, registry *paymentcap.Registry, metadata capability.ServiceMetadata, scope string) *Capability {
-	if strings.TrimSpace(scope) == "" {
-		scope = "platform:capabilities:read"
+func NewCapability(service *service.Service, registry *paymentcap.Registry, metadata capability.ServiceMetadata, readScope, probeScope string) *Capability {
+	if strings.TrimSpace(readScope) == "" {
+		readScope = "platform:capabilities:read"
 	}
-	return &Capability{service: service, registry: registry, metadata: metadata, scope: strings.TrimSpace(scope), healthLimiter: ghttpx.NewRateLimiter(5, time.Minute)}
+	if strings.TrimSpace(probeScope) == "" {
+		probeScope = "platform:capabilities:probe"
+	}
+	return &Capability{service: service, registry: registry, metadata: metadata, readScope: strings.TrimSpace(readScope), probeScope: strings.TrimSpace(probeScope), healthLimiter: ghttpx.NewRateLimiter(5, time.Minute)}
 }
 
 func (controller *Capability) Capabilities(ctx context.Context, _ *v1.AdminCapabilitiesReq) (*v1.AdminCapabilitiesRes, error) {
@@ -72,7 +76,7 @@ func (controller *Capability) Provider(ctx context.Context, req *v1.AdminProvide
 }
 
 func (controller *Capability) ProviderHealthCheck(ctx context.Context, req *v1.AdminProviderHealthCheckReq) (*v1.AdminProviderHealthCheckRes, error) {
-	principal, err := controller.authorize(ctx)
+	principal, err := controller.authorizeProbe(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -94,17 +98,17 @@ func (controller *Capability) ProviderHealthCheck(ctx context.Context, req *v1.A
 	defer cancel()
 	startedAt := time.Now()
 	probeErr := controller.registry.CheckHealth(probeCtx, req.Key)
+	g.Log().Info(ctx, "commerce payment provider health check", "provider", strings.TrimSpace(req.Key), "actor", actor, "durationMs", time.Since(startedAt).Milliseconds(), "succeeded", probeErr == nil)
 	snapshot, err = controller.snapshotAuthorized(ctx)
 	if err != nil {
 		return nil, err
 	}
 	item, _ := snapshot.Provider(req.Key)
-	g.Log().Info(ctx, "commerce payment provider health check", "provider", item.Key, "health", item.Health, "actor", actor, "durationMs", time.Since(startedAt).Milliseconds(), "succeeded", probeErr == nil)
 	return &v1.AdminProviderHealthCheckRes{Provider: item}, nil
 }
 
 func (controller *Capability) snapshot(ctx context.Context) (*capability.Snapshot, error) {
-	if _, err := controller.authorize(ctx); err != nil {
+	if _, err := controller.authorizeRead(ctx); err != nil {
 		return nil, err
 	}
 	return controller.snapshotAuthorized(ctx)
@@ -122,9 +126,17 @@ func (controller *Capability) snapshotAuthorized(ctx context.Context) (*capabili
 	return controller.registry.Snapshot(controller.metadata, states, time.Now())
 }
 
-func (controller *Capability) authorize(ctx context.Context) (*authjwt.Principal, error) {
+func (controller *Capability) authorizeRead(ctx context.Context) (*authjwt.Principal, error) {
 	principal, ok := authjwt.From(ctx)
-	if !ok || principal == nil || (!principal.HasRole("admin") && !principal.HasScope(controller.scope)) {
+	if !ok || principal == nil || (!principal.HasRole("admin") && !principal.HasScope(controller.readScope)) {
+		return nil, commerceerr.Forbidden()
+	}
+	return principal, nil
+}
+
+func (controller *Capability) authorizeProbe(ctx context.Context) (*authjwt.Principal, error) {
+	principal, ok := authjwt.From(ctx)
+	if !ok || principal == nil || (!principal.HasRole("admin") && !principal.HasScope(controller.probeScope)) {
 		return nil, commerceerr.Forbidden()
 	}
 	return principal, nil

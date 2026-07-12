@@ -33,6 +33,12 @@ type providerState struct {
 	probeMu    sync.Mutex
 }
 
+type capabilityCandidate struct {
+	configuration capability.Configuration
+	enablement    capability.Enablement
+	health        capability.Health
+}
+
 type Registry struct {
 	mu          sync.Mutex
 	providers   map[string]*providerState
@@ -119,48 +125,32 @@ func (registry *Registry) rebuildLocked(generatedAt time.Time) (*capability.Snap
 	sort.Strings(keys)
 	providers := make([]capability.Provider, 0, len(keys))
 	var (
-		anyConfigured bool
-		anyEnabled    bool
-		anyHealthy    bool
-		anyUnhealthy  bool
-		operations    []string
+		selected   *capabilityCandidate
+		operations []string
 	)
 	for _, key := range keys {
 		state := registry.providers[key]
 		enablement := capability.EnablementDisabled
 		if enabled[state.definition.Adapter] {
 			enablement = capability.EnablementEnabled
-			anyEnabled = true
 		}
 		configuration := configurationFrom(state.definition.RequiredConfig)
-		if configuration == capability.ConfigurationComplete {
-			anyConfigured = true
-		}
-		if enablement == capability.EnablementEnabled && configuration == capability.ConfigurationComplete {
-			anyHealthy = anyHealthy || state.health == capability.HealthHealthy
-			anyUnhealthy = anyUnhealthy || state.health == capability.HealthUnhealthy
-		}
+		registered := state.definition.Gateway != nil
 		operations = append(operations, state.definition.Operations...)
 		providers = append(providers, capability.Provider{
-			Key: key, Adapter: state.definition.Adapter, Registered: state.definition.Gateway != nil, CapabilityKeys: []string{"commerce.payment"},
+			Key: key, Adapter: state.definition.Adapter, Registered: registered, CapabilityKeys: []string{"commerce.payment"},
 			Configuration: configuration, Enablement: enablement, Health: state.health, Mode: state.definition.Mode,
 			Operations: state.definition.Operations, RequiredConfig: state.definition.RequiredConfig, LastCheckedAt: state.checkedAt,
 			Links: []capability.Link{{Rel: "health-check", Href: "/api/v1/admin/providers/" + key + "/health-check"}},
 		})
+		candidate := &capabilityCandidate{configuration: configuration, enablement: enablement, health: state.health}
+		if registered && (selected == nil || candidateScore(candidate) > candidateScore(selected)) {
+			selected = candidate
+		}
 	}
-	configuration := capability.ConfigurationMissing
-	if anyConfigured {
-		configuration = capability.ConfigurationComplete
-	}
-	enablement := capability.EnablementDisabled
-	if anyEnabled {
-		enablement = capability.EnablementEnabled
-	}
-	health := capability.HealthUnknown
-	if anyHealthy {
-		health = capability.HealthHealthy
-	} else if anyUnhealthy {
-		health = capability.HealthUnhealthy
+	configuration, enablement, health := capability.ConfigurationMissing, capability.EnablementDisabled, capability.HealthUnknown
+	if selected != nil {
+		configuration, enablement, health = selected.configuration, selected.enablement, selected.health
 	}
 	snapshot, err := capability.NewSnapshot(capability.Manifest{
 		Service: registry.service, GeneratedAt: generatedAt, Redaction: capability.RedactionMetadata{Policy: "presence-only", Version: "1"},
@@ -178,6 +168,35 @@ func (registry *Registry) rebuildLocked(generatedAt time.Time) (*capability.Snap
 	registry.snapshot = snapshot
 	registry.generatedAt = generatedAt
 	return snapshot, nil
+}
+
+func candidateScore(candidate *capabilityCandidate) int {
+	if candidate == nil {
+		return -1
+	}
+	score := 0
+	if candidate.enablement == capability.EnablementEnabled {
+		score += 100
+	}
+	switch candidate.configuration {
+	case capability.ConfigurationComplete:
+		score += 30
+	case capability.ConfigurationPartial:
+		score += 20
+	case capability.ConfigurationMissing:
+		score += 10
+	}
+	switch candidate.health {
+	case capability.HealthHealthy:
+		score += 4
+	case capability.HealthDegraded:
+		score += 3
+	case capability.HealthUnknown:
+		score += 2
+	case capability.HealthUnhealthy:
+		score++
+	}
+	return score
 }
 
 func (registry *Registry) recordHealth(provider *providerState, health capability.Health) {
