@@ -6,7 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"platform/gokit/capability"
+	"platform/paykit"
 	"platform/services/commerce/internal/notificationclient"
 	"platform/services/commerce/internal/service"
 )
@@ -43,5 +46,26 @@ func TestNotificationDeliverySenderSwallowsProviderFailure(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("SendDelivery returned error: %v", err)
+	}
+}
+
+func TestBuildPaymentCapabilityRegistryReportsOmittedConfig(t *testing.T) {
+	registry, err := BuildPaymentCapabilityRegistry(paykit.NewRegistry(), Alipay{}, PayPal{}, WeChat{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := registry.Snapshot(
+		capability.ServiceMetadata{Name: "commerce", Version: "test", BuildSHA: "test", Deployment: "commerce-test"},
+		nil,
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"alipay-primary", "paypal-primary", "wechat-primary"} {
+		provider, ok := snapshot.Provider(key)
+		if !ok || provider.Configuration != capability.ConfigurationMissing || provider.Enablement != capability.EnablementDisabled || provider.Health != capability.HealthUnknown || provider.Effective {
+			t.Fatalf("provider %s = %+v, %t", key, provider, ok)
+		}
 	}
 }

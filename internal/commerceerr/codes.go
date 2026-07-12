@@ -33,7 +33,10 @@ var (
 
 	// CodeInvalidRequest is returned for malformed request input (e.g. a paid order
 	// missing price/currency, or a points order missing pointsCost).
-	CodeInvalidRequest = errs.Register("commerce.invalid_request", http.StatusBadRequest)
+	CodeInvalidRequest         = errs.Register("commerce.invalid_request", http.StatusBadRequest)
+	CodeCapabilityNotFound     = errs.Register("commerce.capability_not_found", http.StatusNotFound)
+	CodeProviderNotFound       = errs.Register("commerce.provider_not_found", http.StatusNotFound)
+	CodeHealthCheckRateLimited = errs.Register("commerce.health_check_rate_limited", http.StatusTooManyRequests)
 )
 
 // ProductNotFound returns a Coded error for a missing product.
@@ -81,4 +84,16 @@ func InsufficientPoints(pointsCost int) *errs.Coded {
 // InvalidRequest returns a Coded error for malformed request input.
 func InvalidRequest(detail string) *errs.Coded {
 	return errs.New(CodeInvalidRequest, detail, nil)
+}
+
+func CapabilityNotFound(key string) *errs.Coded {
+	return errs.New(CodeCapabilityNotFound, "commerce capability not found", map[string]any{"key": key})
+}
+
+func ProviderNotFound(key string) *errs.Coded {
+	return errs.New(CodeProviderNotFound, "commerce payment provider not found", map[string]any{"key": key})
+}
+
+func HealthCheckRateLimited(key string) *errs.Coded {
+	return errs.New(CodeHealthCheckRateLimited, "commerce payment provider health check rate limit exceeded", map[string]any{"key": key})
 }

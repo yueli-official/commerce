@@ -5,13 +5,17 @@ package appconfig
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 
+	"platform/gokit/capability"
+	"platform/paykit"
 	"platform/services/commerce/internal/assetclient"
 	"platform/services/commerce/internal/notificationclient"
+	"platform/services/commerce/internal/paymentcap"
 	"platform/services/commerce/internal/service"
 	"platform/services/commerce/internal/shopclient"
 	"platform/services/commerce/internal/sitecontext"
@@ -291,4 +295,73 @@ func LoadWeChat(ctx context.Context) WeChat {
 		AppID:            g.Cfg().MustGet(ctx, "commerce.wechat.app_id").String(),
 		NotifyURL:        g.Cfg().MustGet(ctx, "commerce.wechat.notify_url").String(),
 	}
+}
+
+func BuildPaymentCapabilityRegistry(registry paykit.Registry, alipay Alipay, paypal PayPal, wechat WeChat) (*paymentcap.Registry, error) {
+	field := func(key, value string, secret bool) capability.ConfigField {
+		state := capability.ConfigStateMissing
+		if strings.TrimSpace(value) != "" {
+			state = capability.ConfigStatePresent
+		}
+		return capability.ConfigField{Key: key, State: state, Secret: secret}
+	}
+	mode := func(sandbox bool) string {
+		if sandbox {
+			return "sandbox"
+		}
+		return "production"
+	}
+	gateway := func(key string) paykit.Provider {
+		value, _ := registry.Get(key)
+		return value
+	}
+	var (
+		alipayGateway = gateway("alipay")
+		paypalGateway = gateway("paypal")
+		wechatGateway = gateway("wechat")
+	)
+	return paymentcap.New(
+		paymentcap.Definition{
+			Instance: "alipay-primary", Adapter: "alipay", Mode: mode(alipay.Sandbox), Gateway: alipayGateway,
+			Operations: []string{"notify", "query", "redirect"}, RequiredConfig: []capability.ConfigField{
+				field("app_id", alipay.AppID, false), field("private_key", alipay.PrivateKey, true), field("alipay_public_key", alipay.AlipayPublicKey, false),
+				field("notify_url", alipay.NotifyURL, false), field("return_url", alipay.ReturnURL, false),
+			},
+		},
+		paymentcap.Definition{
+			Instance: "paypal-primary", Adapter: "paypal", Mode: mode(paypal.Sandbox), Gateway: paypalGateway,
+			Operations: []string{"browser_button", "refund", "server_capture"}, RequiredConfig: []capability.ConfigField{
+				field("client_id", paypal.ClientID, false), field("client_secret", paypal.ClientSecret, true),
+			},
+		},
+		paymentcap.Definition{
+			Instance: "wechat-primary", Adapter: "wechat", Mode: "production", Gateway: wechatGateway,
+			Operations: []string{"native_qr", "notify", "refund"}, RequiredConfig: []capability.ConfigField{
+				field("merchant_id", wechat.MerchantID, false), field("merchant_cert_sn", wechat.MerchantCertSN, false),
+				field("merchant_api_v3_key", wechat.MerchantAPIv3Key, true), field("private_key", wechat.PrivateKey, true),
+				field("app_id", wechat.AppID, false), field("notify_url", wechat.NotifyURL, false),
+			},
+		},
+	)
+}
+
+func CapabilityServiceMetadata() capability.ServiceMetadata {
+	return capability.ServiceMetadata{
+		Name: "commerce", Version: envOrAny([]string{"PLATFORM_SERVICE_VERSION", "OTEL_SERVICE_VERSION"}, "dev"),
+		BuildSHA:   envOrAny([]string{"PLATFORM_BUILD_SHA", "GITHUB_SHA"}, "unknown"),
+		Deployment: envOrAny([]string{"PLATFORM_DEPLOYMENT_IDENTITY", "HOSTNAME"}, "commerce-api"),
+	}
+}
+
+func CapabilityScope(ctx context.Context) string {
+	return g.Cfg().MustGet(ctx, "commerce.capabilityScope", "platform:capabilities:read").String()
+}
+
+func envOrAny(keys []string, fallback string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return fallback
 }

@@ -19,6 +19,7 @@ database:
     name: "commerce"
 
 commerce:
+  capabilityScope: "platform:capabilities:read"
   # Reject checkout/access calls that do not resolve to a registered OAuth
   # client or a valid Shop BFF assertion.
   requireTrustedSiteContext: true

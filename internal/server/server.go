@@ -6,31 +6,36 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 
 	"platform/gokit/authjwt"
+	"platform/gokit/capability"
 	"platform/gokit/ghttpx"
 	"platform/gokit/healthcheck"
 	"platform/gokit/response"
 	"platform/paykit"
 	"platform/services/commerce/internal/controller"
 	"platform/services/commerce/internal/dao"
+	"platform/services/commerce/internal/paymentcap"
 	"platform/services/commerce/internal/service"
 	"platform/services/commerce/internal/sitecontext"
 )
 
 // Deps are the wiring dependencies for the commerce server.
 type Deps struct {
-	Verifier        *authjwt.Verifier
-	DB              *dao.PG
-	Registry        paykit.Registry
-	NotifyURL       string                // base URL for the alipay notify callback
-	ReturnURL       string                // URL the buyer is sent to after paying
-	DevSettle       bool                  // when true, register the /dev/orders/{orderNo}/settle endpoint
-	Checkin         service.CheckinConfig // daily check-in reward curve
-	Delivery        service.DeliveryConfig
-	Mailer          service.DeliveryMailer
-	Asset           service.AssetDeliveryClient
-	CurrentDelivery service.CurrentDeliveryResolver
-	CurrentCheckout service.CurrentCheckoutItemResolver
-	SiteContext     *sitecontext.Resolver
+	Verifier          *authjwt.Verifier
+	DB                *dao.PG
+	Registry          paykit.Registry
+	NotifyURL         string                // base URL for the alipay notify callback
+	ReturnURL         string                // URL the buyer is sent to after paying
+	DevSettle         bool                  // when true, register the /dev/orders/{orderNo}/settle endpoint
+	Checkin           service.CheckinConfig // daily check-in reward curve
+	Delivery          service.DeliveryConfig
+	Mailer            service.DeliveryMailer
+	Asset             service.AssetDeliveryClient
+	CurrentDelivery   service.CurrentDeliveryResolver
+	CurrentCheckout   service.CurrentCheckoutItemResolver
+	SiteContext       *sitecontext.Resolver
+	Capabilities      *paymentcap.Registry
+	CapabilityScope   string
+	CapabilityService capability.ServiceMetadata
 }
 
 // Configure mounts the commerce-service routes onto s.
@@ -60,6 +65,14 @@ func Configure(s *ghttp.Server, d Deps) {
 		})
 		grp.GET("/readyz", healthcheck.Handler(map[string]healthcheck.Check{"database": healthcheck.Database}))
 	})
+
+	if d.Capabilities != nil {
+		capabilityCtrl := controller.NewCapability(svc, d.Capabilities, d.CapabilityService, d.CapabilityScope)
+		s.Group("/", func(grp *ghttp.RouterGroup) {
+			grp.Middleware(ghttpx.Middleware, authjwt.Middleware(d.Verifier))
+			grp.Bind(capabilityCtrl)
+		})
+	}
 
 	// ── Public: payment async notify (no JWT; provider-native response) ─────
 	// Notify handlers write raw provider responses directly, bypassing the
