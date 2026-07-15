@@ -67,10 +67,10 @@ commerce:
   # BFF, which signs a short-lived assertion with the same secret. Store real
   # assertion secrets in the deployment secret manager, never in Git.
   trustedSiteContexts:
-    shop-ae:
-      clientIds: ["shop-ae-web"]
+    shop-main:
+      clientIds: ["shop-main-web"]
       assertionSecret: ""
-      shopBaseUrl: "http://shop-ae-api:8088"
+      shopBaseUrl: "http://shop-main-api:8088"
 
   notificationService:
     # Optional for local dev, required if delivery-ready emails should be sent.

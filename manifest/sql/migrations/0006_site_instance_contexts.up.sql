@@ -9,8 +9,8 @@ BEGIN
         JOIN products target
           ON target.external_id = legacy.external_id
          AND target.site_key = CASE legacy.site_key
-             WHEN 'shop' THEN 'shop-ae'
-             WHEN 'resource' THEN 'resource-ae'
+             WHEN 'shop' THEN 'shop-main'
+             WHEN 'resource' THEN 'resource-main'
          END
         WHERE legacy.site_key IN ('shop', 'resource')
     ) THEN
@@ -20,8 +20,8 @@ END $$;
 
 UPDATE products
 SET site_key = CASE site_key
-    WHEN 'shop' THEN 'shop-ae'
-    WHEN 'resource' THEN 'resource-ae'
+    WHEN 'shop' THEN 'shop-main'
+    WHEN 'resource' THEN 'resource-main'
     ELSE site_key
 END,
 updated_at = now()
@@ -29,8 +29,8 @@ WHERE site_key IN ('shop', 'resource');
 
 UPDATE order_items
 SET site_key = CASE site_key
-    WHEN 'shop' THEN 'shop-ae'
-    WHEN 'resource' THEN 'resource-ae'
+    WHEN 'shop' THEN 'shop-main'
+    WHEN 'resource' THEN 'resource-main'
     ELSE site_key
 END
 WHERE site_key IN ('shop', 'resource');

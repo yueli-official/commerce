@@ -9,8 +9,8 @@ import (
 )
 
 func TestCheckoutItemsForceTrustedSiteForEveryItem(t *testing.T) {
-	resolver := sitecontext.New([]sitecontext.Context{{SiteKey: "shop-ae"}})
-	ctx := sitecontext.With(context.Background(), sitecontext.Context{SiteKey: "shop-ae"})
+	resolver := sitecontext.New([]sitecontext.Context{{SiteKey: "shop-main"}})
+	ctx := sitecontext.With(context.Background(), sitecontext.Context{SiteKey: "shop-main"})
 
 	items, err := checkoutItems(ctx, resolver, []v1.CheckoutItemReq{
 		{SiteKey: "shop-ui", ExternalID: "product-1"},
@@ -20,8 +20,8 @@ func TestCheckoutItemsForceTrustedSiteForEveryItem(t *testing.T) {
 		t.Fatalf("checkoutItems() error = %v", err)
 	}
 	for i, item := range items {
-		if item.SiteKey != "shop-ae" {
-			t.Fatalf("items[%d].SiteKey = %q, want shop-ae", i, item.SiteKey)
+		if item.SiteKey != "shop-main" {
+			t.Fatalf("items[%d].SiteKey = %q, want shop-main", i, item.SiteKey)
 		}
 	}
 }
