@@ -1,6 +1,6 @@
 module platform/services/commerce
 
-go 1.26.5
+go 1.25.12
 
 require (
 	github.com/go-jose/go-jose/v3 v3.0.5
