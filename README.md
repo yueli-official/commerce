@@ -1,29 +1,20 @@
 # paykit
 
-`paykit` is the reusable payment-provider toolkit for Yueli services.
+`paykit` 是供 Yueli 后端服务复用的支付 provider 工具包，负责 provider 中立的支付契约及具体 adapter：
 
-It owns provider-neutral payment contracts and concrete provider adapters:
+- `paykit.Provider` 与 `paykit.Registry`
+- 创建支付会话
+- 浏览器按钮或服务端捕获
+- provider 通知与 webhook 验证
+- 退款
+- 测试用 fake provider
+- `providers/*` 下的支付宝、PayPal 与微信 adapter
 
-- `paykit.Provider`
-- `paykit.Registry`
-- create payment session
-- browser-button/server capture
-- provider notify/webhook verification
-- refund
-- fake provider for tests
-- Alipay, PayPal, and WeChat adapters under `providers/*`
+## 边界
 
-## Boundary
+拥有支付编排职责的后端服务（例如 `services/commerce`）可以使用 `paykit`。`products/shop/web` 等商店前端和 `products/shop/api` 等目录服务不得直接导入；它们应调用 Commerce 的结算与订单接口。Commerce 负责订单快照、金额验证、履约、支付事件、退款和未来清结算账本。
 
-Use `paykit` from backend services that own payment orchestration, such as
-`services/commerce`.
-
-Do not import `paykit` from storefront apps such as `products/shop/web`, or from
-catalog services such as `products/shop/api`. Storefronts should call commerce
-checkout and order APIs. Commerce owns order snapshots, amount validation,
-fulfillment, payment events, refunds, and future settlement ledgers.
-
-## Example
+## 示例
 
 ```go
 reg := paykit.NewRegistry()
@@ -44,19 +35,12 @@ provider, ok := reg.Get("paypal")
 if !ok {
     return fmt.Errorf("paypal provider is not registered")
 }
-
-payment, err := provider.CreatePayment(ctx, paykit.CreatePaymentIn{
-    OrderNo:     order.OrderNo,
-    Subject:     order.Subject,
-    AmountCents: order.AmountCents,
-    Currency:    order.Currency,
-    NotifyURL:   notifyURL,
-    ReturnURL:   returnURL,
-})
 ```
 
-## Current Providers
+## 当前 Provider
 
-- `providers/alipay`: Alipay page-pay and async notify verification.
-- `providers/paypal`: PayPal Orders create/capture/refund.
-- `providers/wechat`: WeChat native QR, async notify verification, and refund.
+- `providers/alipay`：支付宝网页支付与异步通知验证。
+- `providers/paypal`：PayPal Orders 创建、捕获和退款。
+- `providers/wechat`：微信 Native 二维码、异步通知验证和退款。
+
+验证命令：`go test ./packages/go/paykit/...`。
