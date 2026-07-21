@@ -11,7 +11,7 @@ import (
 
 	_ "github.com/gogf/gf/contrib/drivers/pgsql/v2"
 
-	"platform/gokit/authjwt"
+	"platform/gokit/authsetup"
 	"platform/gokit/observability"
 	"platform/gokit/openapiexport"
 	"platform/paykit"
@@ -32,11 +32,7 @@ func main() {
 	defer observability.ShutdownWithTimeout(shutdown)
 
 	jw := appconfig.LoadJWKS(ctx)
-	verifier, err := authjwt.NewVerifier(authjwt.VerifierConfig{
-		Keys:     authjwt.NewRemoteKeySource(jw.URL),
-		Issuer:   jw.Issuer,
-		Audience: jw.Audience,
-	})
+	verifier, err := authsetup.NewRemoteVerifier(authsetup.RemoteVerifierConfig{JWKSURL: jw.URL, Issuer: jw.Issuer, Audience: jw.Audience})
 	if err != nil {
 		panic(err)
 	}

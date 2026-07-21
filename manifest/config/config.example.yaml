@@ -24,7 +24,7 @@ commerce:
   # Reject checkout/access calls that do not resolve to a registered OAuth
   # client or a valid Shop BFF assertion.
   requireTrustedSiteContext: true
-  # IdP JWKS for access-token verification (gokit/authjwt). Lazy-fetched.
+  # IdP JWKS for access-token verification (Foundation auth). Lazy-fetched.
   jwks:
     url: "http://localhost:8081/oauth2/jwks.json"
     issuer: "http://localhost:8081"

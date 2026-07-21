@@ -9,7 +9,7 @@ import (
 	"platform/services/commerce/internal/service"
 )
 
-// Notify handles POST /api/v1/payments/alipay/notify (public, no authjwt).
+// Notify handles POST /api/v1/payments/alipay/notify (public, no Foundation auth).
 // The response MUST be the plaintext string "success" or "fail" — Alipay
 // requires exactly this; do NOT wrap in the gokit envelope.
 type Notify struct {

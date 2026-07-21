@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"platform/gokit/authjwt"
+	foundationauth "github.com/yueli-official/foundation/go/auth"
 )
 
 func testResolver() *Resolver {
@@ -20,7 +20,7 @@ func testResolver() *Resolver {
 
 func TestResolverUsesVerifiedOAuthClient(t *testing.T) {
 	resolver := testResolver()
-	got, ok := resolver.ResolvePrincipal(&authjwt.Principal{ClientID: "shop-main-web"})
+	got, ok := resolver.ResolvePrincipal(&foundationauth.Principal{ClientID: "shop-main-web"})
 	if !ok || got.SiteKey != "shop-main" {
 		t.Fatalf("ResolvePrincipal() = %#v, %v", got, ok)
 	}
@@ -31,7 +31,7 @@ func TestResolverRejectsClientMappedToMultipleSites(t *testing.T) {
 		{SiteKey: "shop-main", ClientIDs: []string{"shared-web"}},
 		{SiteKey: "shop-ui", ClientIDs: []string{"shared-web"}},
 	})
-	if _, ok := resolver.ResolvePrincipal(&authjwt.Principal{ClientID: "shared-web"}); ok {
+	if _, ok := resolver.ResolvePrincipal(&foundationauth.Principal{ClientID: "shared-web"}); ok {
 		t.Fatal("ambiguous OAuth client must not resolve to a site")
 	}
 }

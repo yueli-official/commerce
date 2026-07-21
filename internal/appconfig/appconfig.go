@@ -21,7 +21,7 @@ import (
 	"platform/services/commerce/internal/sitecontext"
 )
 
-// JWKS holds the IdP key/issuer config for the authjwt verifier.
+// JWKS holds the IdP key/issuer config for the Foundation auth verifier.
 type JWKS struct {
 	URL      string
 	Issuer   string

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"platform/gokit/authjwt"
+	foundationauth "github.com/yueli-official/foundation/go/auth"
 	"platform/gokit/errs"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
@@ -21,7 +21,7 @@ func NewCredits(svc *service.Service) *Credits { return &Credits{svc: svc} }
 
 // Balance handles GET /api/v1/credits/balance.
 func (c *Credits) Balance(ctx context.Context, _ *v1.BalanceReq) (*v1.BalanceRes, error) {
-	p, ok := authjwt.From(ctx)
+	p, ok := foundationauth.FromContext(ctx)
 	if !ok || p == nil {
 		return nil, errs.New(commerceerr.CodeForbidden, "missing principal", nil)
 	}
@@ -34,7 +34,7 @@ func (c *Credits) Balance(ctx context.Context, _ *v1.BalanceReq) (*v1.BalanceRes
 
 // Ledger handles GET /api/v1/credits/ledger.
 func (c *Credits) Ledger(ctx context.Context, req *v1.LedgerReq) (*v1.LedgerRes, error) {
-	p, ok := authjwt.From(ctx)
+	p, ok := foundationauth.FromContext(ctx)
 	if !ok || p == nil {
 		return nil, errs.New(commerceerr.CodeForbidden, "missing principal", nil)
 	}

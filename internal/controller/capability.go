@@ -7,7 +7,7 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 
-	"platform/gokit/authjwt"
+	foundationauth "github.com/yueli-official/foundation/go/auth"
 	"platform/gokit/capability"
 	"platform/gokit/ghttpx"
 	v1 "platform/services/commerce/api/v1"
@@ -123,16 +123,16 @@ func (controller *Capability) snapshotAuthorized(ctx context.Context) (*capabili
 	return controller.registry.Snapshot(controller.metadata, states, time.Now())
 }
 
-func (controller *Capability) authorizeRead(ctx context.Context) (*authjwt.Principal, error) {
-	principal, ok := authjwt.From(ctx)
+func (controller *Capability) authorizeRead(ctx context.Context) (*foundationauth.Principal, error) {
+	principal, ok := foundationauth.FromContext(ctx)
 	if !ok || principal == nil || (!principal.HasRole("admin") && !principal.HasScope(controller.readScope)) {
 		return nil, commerceerr.Forbidden()
 	}
 	return principal, nil
 }
 
-func (controller *Capability) authorizeProbe(ctx context.Context) (*authjwt.Principal, error) {
-	principal, ok := authjwt.From(ctx)
+func (controller *Capability) authorizeProbe(ctx context.Context) (*foundationauth.Principal, error) {
+	principal, ok := foundationauth.FromContext(ctx)
 	if !ok || principal == nil || (!principal.HasRole("admin") && !principal.HasScope(controller.probeScope)) {
 		return nil, commerceerr.Forbidden()
 	}

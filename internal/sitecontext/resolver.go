@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"platform/gokit/authjwt"
+	foundationauth "github.com/yueli-official/foundation/go/auth"
 )
 
 var (
@@ -80,13 +80,14 @@ func NewWithRequired(contexts []Context, required bool) *Resolver {
 	return resolver
 }
 
-func (r *Resolver) ResolvePrincipal(principal *authjwt.Principal) (Context, bool) {
+func (r *Resolver) ResolvePrincipal(principal *foundationauth.Principal) (Context, bool) {
 	if r == nil || principal == nil {
 		return Context{}, false
 	}
 	clientID := strings.TrimSpace(principal.ClientID)
 	if clientID == "" {
-		clientID, _ = principal.Claims["azp"].(string)
+		claim, _ := principal.Claim("azp")
+		clientID, _ = claim.(string)
 	}
 	if item, ok := r.byClientID[clientID]; ok {
 		return item, true

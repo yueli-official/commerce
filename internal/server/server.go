@@ -5,7 +5,8 @@ package server
 import (
 	"github.com/gogf/gf/v2/net/ghttp"
 
-	"platform/gokit/authjwt"
+	foundationauth "github.com/yueli-official/foundation/go/auth"
+	"platform/gokit/authhttp"
 	"platform/gokit/capability"
 	"platform/gokit/ghttpx"
 	"platform/gokit/healthcheck"
@@ -20,7 +21,7 @@ import (
 
 // Deps are the wiring dependencies for the commerce server.
 type Deps struct {
-	Verifier             *authjwt.Verifier
+	Verifier             *foundationauth.Verifier
 	DB                   *dao.PG
 	Registry             paykit.Registry
 	NotifyURL            string                // base URL for the alipay notify callback
@@ -70,7 +71,7 @@ func Configure(s *ghttp.Server, d Deps) {
 	if d.Capabilities != nil {
 		capabilityCtrl := controller.NewCapability(svc, d.Capabilities, d.CapabilityService, d.CapabilityScope, d.CapabilityProbeScope)
 		s.Group("/", func(grp *ghttp.RouterGroup) {
-			grp.Middleware(ghttpx.Middleware, authjwt.Middleware(d.Verifier))
+			grp.Middleware(ghttpx.Middleware, authhttp.Required(d.Verifier))
 			grp.Bind(capabilityCtrl)
 		})
 	}
@@ -101,7 +102,7 @@ func Configure(s *ghttp.Server, d Deps) {
 	checkoutCtrl := controller.NewCheckout(svc, d.Registry, d.NotifyURL, d.ReturnURL, d.SiteContext)
 	paymentConfigCtrl := controller.NewPaymentConfig(svc, d.Registry)
 	s.Group("/", func(grp *ghttp.RouterGroup) {
-		grp.Middleware(ghttpx.Middleware, authjwt.OptionalMiddleware(d.Verifier), sitecontext.Middleware(d.SiteContext))
+		grp.Middleware(ghttpx.Middleware, authhttp.Optional(d.Verifier), sitecontext.Middleware(d.SiteContext))
 		grp.Bind(checkoutCtrl)
 		grp.Bind(paymentConfigCtrl)
 	})
@@ -112,7 +113,7 @@ func Configure(s *ghttp.Server, d Deps) {
 	creditsCtrl := controller.NewCredits(svc)
 	adminOrderCtrl := controller.NewAdminOrder(svc, d.Registry)
 	s.Group("/", func(grp *ghttp.RouterGroup) {
-		grp.Middleware(ghttpx.Middleware, authjwt.Middleware(d.Verifier), sitecontext.Middleware(d.SiteContext))
+		grp.Middleware(ghttpx.Middleware, authhttp.Required(d.Verifier), sitecontext.Middleware(d.SiteContext))
 		grp.Bind(accessCtrl)
 		grp.Bind(checkinCtrl)
 		grp.Bind(creditsCtrl)

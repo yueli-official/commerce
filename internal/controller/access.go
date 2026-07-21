@@ -3,7 +3,7 @@ package controller
 import (
 	"context"
 
-	"platform/gokit/authjwt"
+	foundationauth "github.com/yueli-official/foundation/go/auth"
 	"platform/gokit/errs"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
@@ -28,7 +28,7 @@ func NewAccess(svc *service.Service, sites ...*sitecontext.Resolver) *Access {
 
 // Entitled handles GET /api/v1/access?siteKey=&externalId= (user JWT required).
 func (c *Access) Entitled(ctx context.Context, req *v1.EntitledReq) (*v1.EntitledRes, error) {
-	p, ok := authjwt.From(ctx)
+	p, ok := foundationauth.FromContext(ctx)
 	if !ok || p == nil {
 		return nil, errs.New(commerceerr.CodeForbidden, "missing principal", nil)
 	}

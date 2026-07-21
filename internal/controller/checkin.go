@@ -3,7 +3,7 @@ package controller
 import (
 	"context"
 
-	"platform/gokit/authjwt"
+	foundationauth "github.com/yueli-official/foundation/go/auth"
 	"platform/gokit/errs"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
@@ -20,7 +20,7 @@ func NewCheckin(svc *service.Service) *Checkin { return &Checkin{svc: svc} }
 
 // Do handles POST /api/v1/checkin.
 func (c *Checkin) Do(ctx context.Context, _ *v1.CheckinReq) (*v1.CheckinRes, error) {
-	p, ok := authjwt.From(ctx)
+	p, ok := foundationauth.FromContext(ctx)
 	if !ok || p == nil {
 		return nil, errs.New(commerceerr.CodeForbidden, "missing principal", nil)
 	}
@@ -36,7 +36,7 @@ func (c *Checkin) Do(ctx context.Context, _ *v1.CheckinReq) (*v1.CheckinRes, err
 
 // Status handles GET /api/v1/checkin/status.
 func (c *Checkin) Status(ctx context.Context, _ *v1.CheckinStatusReq) (*v1.CheckinStatusRes, error) {
-	p, ok := authjwt.From(ctx)
+	p, ok := foundationauth.FromContext(ctx)
 	if !ok || p == nil {
 		return nil, errs.New(commerceerr.CodeForbidden, "missing principal", nil)
 	}

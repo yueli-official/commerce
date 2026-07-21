@@ -3,7 +3,7 @@ package controller
 import (
 	"context"
 
-	"platform/gokit/authjwt"
+	foundationauth "github.com/yueli-official/foundation/go/auth"
 	"platform/paykit"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
@@ -114,7 +114,7 @@ func (c *AdminOrder) RefundOrder(ctx context.Context, req *v1.AdminOrderRefundRe
 }
 
 func requireAdmin(ctx context.Context) error {
-	p, ok := authjwt.From(ctx)
+	p, ok := foundationauth.FromContext(ctx)
 	if !ok || p == nil || !p.HasRole("admin") {
 		return commerceerr.Forbidden()
 	}

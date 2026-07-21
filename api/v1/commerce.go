@@ -441,7 +441,7 @@ type LedgerRes struct {
 }
 
 // ─── POST /api/v1/payments/alipay/notify ────────────────────────────────────
-// (Public, no authjwt — handled via raw ghttp.Request in the controller,
+// (Public, no Foundation auth — handled via raw ghttp.Request in the controller,
 // not via struct-based binding, because the response must be plaintext "success".)
 
 // ─── POST /dev/orders/{orderNo}/settle ──────────────────────────────────────

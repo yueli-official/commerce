@@ -5,7 +5,7 @@ import (
 
 	"github.com/gogf/gf/v2/net/ghttp"
 
-	"platform/gokit/authjwt"
+	foundationauth "github.com/yueli-official/foundation/go/auth"
 	"platform/gokit/response"
 	"platform/services/commerce/internal/commerceerr"
 )
@@ -16,7 +16,7 @@ const (
 	HeaderSiteSignature = "X-Platform-Site-Signature"
 )
 
-// Middleware resolves a trusted site after authjwt middleware has optionally
+// Middleware resolves a trusted site after Foundation auth middleware has optionally
 // verified the caller. Browser-controlled request fields are never used here.
 func Middleware(resolver *Resolver) func(r *ghttp.Request) {
 	return func(r *ghttp.Request) {
@@ -26,7 +26,7 @@ func Middleware(resolver *Resolver) func(r *ghttp.Request) {
 		}
 
 		var resolved Context
-		if principal, ok := authjwt.From(r.Context()); ok {
+		if principal, ok := foundationauth.FromContext(r.Context()); ok {
 			resolved, _ = resolver.ResolvePrincipal(principal)
 		}
 

@@ -7,7 +7,7 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 
-	"platform/gokit/authjwt"
+	foundationauth "github.com/yueli-official/foundation/go/auth"
 	"platform/gokit/errs"
 	"platform/paykit"
 	v1 "platform/services/commerce/api/v1"
@@ -60,7 +60,7 @@ func (c *Checkout) CreateCheckout(ctx context.Context, req *v1.CreateCheckoutReq
 		CancelURL:  req.CancelURL,
 		Items:      make([]service.CheckoutItemDesc, 0, len(req.Items)),
 	}
-	if p, ok := authjwt.From(ctx); ok && p != nil {
+	if p, ok := foundationauth.FromContext(ctx); ok && p != nil {
 		desc.BuyerSub = p.Subject
 	}
 	items, err := checkoutItems(ctx, c.sites, req.Items)
@@ -104,7 +104,7 @@ func (c *Checkout) CreateCheckout(ctx context.Context, req *v1.CreateCheckoutReq
 }
 
 func (c *Checkout) CreatePointsCheckout(ctx context.Context, req *v1.CreatePointsCheckoutReq) (*v1.CreatePointsCheckoutRes, error) {
-	p, ok := authjwt.From(ctx)
+	p, ok := foundationauth.FromContext(ctx)
 	if !ok || p == nil {
 		return nil, commerceerr.Forbidden()
 	}
@@ -127,7 +127,7 @@ func (c *Checkout) CreatePointsCheckout(ctx context.Context, req *v1.CreatePoint
 
 func (c *Checkout) CreateFreeCheckout(ctx context.Context, req *v1.CreateFreeCheckoutReq) (*v1.CreateFreeCheckoutRes, error) {
 	var buyerSub string
-	if p, ok := authjwt.From(ctx); ok && p != nil {
+	if p, ok := foundationauth.FromContext(ctx); ok && p != nil {
 		buyerSub = p.Subject
 	}
 	items, err := checkoutItems(ctx, c.sites, req.Items)
@@ -207,7 +207,7 @@ func recordPaymentFailure(ctx context.Context, svc *service.Service, order *mode
 
 func (c *Checkout) CheckoutStatus(ctx context.Context, req *v1.CheckoutStatusReq) (*v1.CheckoutStatusRes, error) {
 	var buyerSub string
-	if p, ok := authjwt.From(ctx); ok && p != nil {
+	if p, ok := foundationauth.FromContext(ctx); ok && p != nil {
 		buyerSub = p.Subject
 	}
 	status, err := c.svc.CheckoutStatus(ctx, req.OrderNo, buyerSub, req.BuyerEmail)
@@ -219,7 +219,7 @@ func (c *Checkout) CheckoutStatus(ctx context.Context, req *v1.CheckoutStatusReq
 
 func (c *Checkout) SyncCheckout(ctx context.Context, req *v1.SyncCheckoutReq) (*v1.SyncCheckoutRes, error) {
 	var buyerSub string
-	if p, ok := authjwt.From(ctx); ok && p != nil {
+	if p, ok := foundationauth.FromContext(ctx); ok && p != nil {
 		buyerSub = p.Subject
 	}
 	status, err := c.svc.CheckoutStatus(ctx, req.OrderNo, buyerSub, req.BuyerEmail)
@@ -267,7 +267,7 @@ func (c *Checkout) SyncCheckout(ctx context.Context, req *v1.SyncCheckoutReq) (*
 
 func (c *Checkout) CancelCheckout(ctx context.Context, req *v1.CancelCheckoutReq) (*v1.CancelCheckoutRes, error) {
 	var buyerSub string
-	if p, ok := authjwt.From(ctx); ok && p != nil {
+	if p, ok := foundationauth.FromContext(ctx); ok && p != nil {
 		buyerSub = p.Subject
 	}
 	order, err := c.svc.CancelCheckout(ctx, req.OrderNo, buyerSub, req.BuyerEmail)
@@ -302,7 +302,7 @@ func (c *Checkout) DeliveryDownload(ctx context.Context, req *v1.DeliveryDownloa
 }
 
 func (c *Checkout) MyPurchases(ctx context.Context, req *v1.MyPurchasesReq) (*v1.MyPurchasesRes, error) {
-	p, ok := authjwt.From(ctx)
+	p, ok := foundationauth.FromContext(ctx)
 	if !ok || p == nil {
 		return nil, commerceerr.Forbidden()
 	}
@@ -320,7 +320,7 @@ func (c *Checkout) MyPurchases(ctx context.Context, req *v1.MyPurchasesReq) (*v1
 }
 
 func (c *Checkout) MyPurchaseByOrder(ctx context.Context, req *v1.MyPurchaseByOrderReq) (*v1.MyPurchaseByOrderRes, error) {
-	p, ok := authjwt.From(ctx)
+	p, ok := foundationauth.FromContext(ctx)
 	if !ok || p == nil {
 		return nil, commerceerr.Forbidden()
 	}
@@ -332,7 +332,7 @@ func (c *Checkout) MyPurchaseByOrder(ctx context.Context, req *v1.MyPurchaseByOr
 }
 
 func (c *Checkout) MyPurchaseDownload(ctx context.Context, req *v1.MyPurchaseDownloadReq) (*v1.DeliveryDownloadRes, error) {
-	p, ok := authjwt.From(ctx)
+	p, ok := foundationauth.FromContext(ctx)
 	if !ok || p == nil {
 		return nil, commerceerr.Forbidden()
 	}

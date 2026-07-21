@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	jose "github.com/go-jose/go-jose/v3"
-	"github.com/go-jose/go-jose/v3/jwt"
+	jose "github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 	_ "github.com/gogf/gf/contrib/drivers/pgsql/v2"
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/encoding/gjson"
@@ -33,7 +33,8 @@ import (
 	"github.com/gogf/gf/v2/test/gtest"
 	_ "github.com/lib/pq"
 
-	"platform/gokit/authjwt"
+	foundationauth "github.com/yueli-official/foundation/go/auth"
+	"platform/gokit/authsetup"
 	"platform/paykit"
 	"platform/services/commerce/internal/dao"
 	"platform/services/commerce/internal/model"
@@ -175,12 +176,12 @@ func envOr(k, def string) string {
 	return def
 }
 
-func mustVerifier(t *gtest.T, priv *rsa.PrivateKey) *authjwt.Verifier {
+func mustVerifier(t *gtest.T, priv *rsa.PrivateKey) *foundationauth.Verifier {
 	set := jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{
 		Key: priv.Public(), KeyID: testKID, Algorithm: "RS256", Use: "sig",
 	}}}
-	v, err := authjwt.NewVerifier(authjwt.VerifierConfig{
-		Keys:   authjwt.NewStaticKeySource(set),
+	v, err := authsetup.NewStaticVerifier(authsetup.StaticVerifierConfig{
+		Keys:   set,
 		Issuer: testIssuer,
 	})
 	t.AssertNil(err)
@@ -199,18 +200,18 @@ func signToken(t *gtest.T, priv *rsa.PrivateKey, sub string) string {
 		Subject:  sub,
 		IssuedAt: jwt.NewNumericDate(now.Add(-time.Minute)),
 		Expiry:   jwt.NewNumericDate(now.Add(10 * time.Minute)),
-	}).CompactSerialize()
+	}).Serialize()
 	t.AssertNil(err)
 	return raw
 }
 
 var serverSeq int
 
-func newTestServer(t *gtest.T, db *dao.PG, fake *fakeGateway, v *authjwt.Verifier, devSettle bool) *ghttp.Server {
+func newTestServer(t *gtest.T, db *dao.PG, fake *fakeGateway, v *foundationauth.Verifier, devSettle bool) *ghttp.Server {
 	return newTestServerWithGW(t, db, fake, v, devSettle)
 }
 
-func newTestServerWithGW(t *gtest.T, db *dao.PG, gw paykit.Provider, v *authjwt.Verifier, devSettle bool) *ghttp.Server {
+func newTestServerWithGW(t *gtest.T, db *dao.PG, gw paykit.Provider, v *foundationauth.Verifier, devSettle bool) *ghttp.Server {
 	serverSeq++
 	name := fmt.Sprintf("%s-%d", t.Name(), serverSeq)
 	reg := paykit.Registry{"alipay": gw}
