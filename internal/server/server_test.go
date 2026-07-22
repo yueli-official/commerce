@@ -369,9 +369,8 @@ func TestCommerceHTTP(t *testing.T) {
 		defer createResp.Close()
 		t.Assert(createResp.StatusCode, 200)
 		jCreate := gjson.New(createResp.ReadAllString())
-		t.Assert(jCreate.Get("code").String(), "ok")
-		orderNo := jCreate.Get("data.orderNo").String()
-		payURL := jCreate.Get("data.payUrl").String()
+		orderNo := jCreate.Get("orderNo").String()
+		payURL := jCreate.Get("payUrl").String()
 		t.AssertNE(orderNo, "")
 		t.Assert(payURL, fakePayURL)
 
@@ -381,9 +380,8 @@ func TestCommerceHTTP(t *testing.T) {
 		defer accResp.Close()
 		t.Assert(accResp.StatusCode, 200)
 		jAcc := gjson.New(accResp.ReadAllString())
-		t.Assert(jAcc.Get("code").String(), "ok")
-		t.Assert(jAcc.Get("data.entitled").Bool(), false)
-		t.Assert(jAcc.Get("data.reason").String(), "not_purchased")
+		t.Assert(jAcc.Get("entitled").Bool(), false)
+		t.Assert(jAcc.Get("reason").String(), "not_purchased")
 
 		// ── 4. Dev settle → order becomes paid ────────────────────────────────
 		settleC := g.Client()
@@ -392,8 +390,7 @@ func TestCommerceHTTP(t *testing.T) {
 		t.AssertNil(err)
 		defer settleResp.Close()
 		t.Assert(settleResp.StatusCode, 200)
-		jSettle := gjson.New(settleResp.ReadAllString())
-		t.Assert(jSettle.Get("code").String(), "ok")
+		_ = settleResp.ReadAllString()
 
 		// ── 5. GET /access now → {entitled:true, reason:ok} ──────────────────
 		accResp2, err := authC.Get(ctx, fmt.Sprintf("/api/v1/access?siteKey=%s&externalId=%s", fakeSiteKey, fakeExtID))
@@ -401,9 +398,8 @@ func TestCommerceHTTP(t *testing.T) {
 		defer accResp2.Close()
 		t.Assert(accResp2.StatusCode, 200)
 		jAcc2 := gjson.New(accResp2.ReadAllString())
-		t.Assert(jAcc2.Get("code").String(), "ok")
-		t.Assert(jAcc2.Get("data.entitled").Bool(), true)
-		t.Assert(jAcc2.Get("data.reason").String(), "ok")
+		t.Assert(jAcc2.Get("entitled").Bool(), true)
+		t.Assert(jAcc2.Get("reason").String(), "ok")
 
 		// ── 6. Notify idempotency ─────────────────────────────────────────────
 		// Create a second order for a fresh product to test notify idempotency.
@@ -420,7 +416,7 @@ func TestCommerceHTTP(t *testing.T) {
 		defer createResp2.Close()
 		t.Assert(createResp2.StatusCode, 200)
 		jCreate2 := gjson.New(createResp2.ReadAllString())
-		orderNo2 := jCreate2.Get("data.orderNo").String()
+		orderNo2 := jCreate2.Get("orderNo").String()
 		t.AssertNE(orderNo2, "")
 
 		// fake.successBody was set by the second CreatePayment call.
@@ -448,8 +444,8 @@ func TestCommerceHTTP(t *testing.T) {
 		defer accResp3.Close()
 		t.Assert(accResp3.StatusCode, 200)
 		jAcc3 := gjson.New(accResp3.ReadAllString())
-		t.Assert(jAcc3.Get("data.entitled").Bool(), true)
-		t.Assert(jAcc3.Get("data.reason").String(), "ok")
+		t.Assert(jAcc3.Get("entitled").Bool(), true)
+		t.Assert(jAcc3.Get("reason").String(), "ok")
 
 		// ── 7. Dev settle absent when devSettle=false ────────────────────────
 		s2 := newTestServer(t, db, &fakeGateway{}, v, false)
@@ -499,7 +495,7 @@ func TestCheckoutSyncPaymentQuerySettlesOrder(t *testing.T) {
 		t.AssertNil(err)
 		defer createResp.Close()
 		t.Assert(createResp.StatusCode, 200)
-		orderNo := gjson.New(createResp.ReadAllString()).Get("data.orderNo").String()
+		orderNo := gjson.New(createResp.ReadAllString()).Get("orderNo").String()
 		t.AssertNE(orderNo, "")
 
 		fake.queryOut = paykit.QueryPaymentOut{
@@ -513,10 +509,9 @@ func TestCheckoutSyncPaymentQuerySettlesOrder(t *testing.T) {
 		defer syncResp.Close()
 		t.Assert(syncResp.StatusCode, 200)
 		jSync := gjson.New(syncResp.ReadAllString())
-		t.Assert(jSync.Get("code").String(), "ok")
-		t.Assert(jSync.Get("data.status").String(), model.OrderStatusFulfilled)
-		t.Assert(jSync.Get("data.deliveryState").String(), "granted")
-		t.AssertNE(jSync.Get("data.deliveryRef").String(), "")
+		t.Assert(jSync.Get("status").String(), model.OrderStatusFulfilled)
+		t.Assert(jSync.Get("deliveryState").String(), "granted")
+		t.AssertNE(jSync.Get("deliveryRef").String(), "")
 		t.Assert(len(fake.queryCalls), 1)
 		t.Assert(fake.queryCalls[0].OrderNo, orderNo)
 		t.Assert(fake.queryCalls[0].AmountCents, 100)
@@ -607,41 +602,41 @@ func TestCommerceM2_CheckinAndPoints(t *testing.T) {
 		t.AssertNil(err)
 		jci := gjson.New(ci.ReadAllString())
 		ci.Close()
-		t.Assert(jci.Get("data.alreadyCheckedIn").Bool(), false)
-		t.Assert(jci.Get("data.streak").Int(), 1)
-		t.Assert(jci.Get("data.pointsAwarded").Int(), 10)
-		t.Assert(jci.Get("data.balance").Int(), 10)
+		t.Assert(jci.Get("alreadyCheckedIn").Bool(), false)
+		t.Assert(jci.Get("streak").Int(), 1)
+		t.Assert(jci.Get("pointsAwarded").Int(), 10)
+		t.Assert(jci.Get("balance").Int(), 10)
 
 		// ── 2. Status reflects today's check-in (no mutation) ──────────────────
 		st, err := authC.Get(ctx, "/api/v1/checkin/status")
 		t.AssertNil(err)
 		jst := gjson.New(st.ReadAllString())
 		st.Close()
-		t.Assert(jst.Get("data.checkedInToday").Bool(), true)
-		t.Assert(jst.Get("data.streak").Int(), 1)
-		t.Assert(jst.Get("data.balance").Int(), 10)
+		t.Assert(jst.Get("checkedInToday").Bool(), true)
+		t.Assert(jst.Get("streak").Int(), 1)
+		t.Assert(jst.Get("balance").Int(), 10)
 
 		// ── 3. Second check-in same day → idempotent, no double-earn ───────────
 		ci2, err := authC.Post(ctx, "/api/v1/checkin", nil)
 		t.AssertNil(err)
 		jci2 := gjson.New(ci2.ReadAllString())
 		ci2.Close()
-		t.Assert(jci2.Get("data.alreadyCheckedIn").Bool(), true)
-		t.Assert(jci2.Get("data.balance").Int(), 10)
+		t.Assert(jci2.Get("alreadyCheckedIn").Bool(), true)
+		t.Assert(jci2.Get("balance").Int(), 10)
 
 		// ── 4. Balance + ledger ────────────────────────────────────────────────
 		bal, err := authC.Get(ctx, "/api/v1/credits/balance")
 		t.AssertNil(err)
-		t.Assert(gjson.New(bal.ReadAllString()).Get("data.balance").Int(), 10)
+		t.Assert(gjson.New(bal.ReadAllString()).Get("balance").Int(), 10)
 		bal.Close()
 
 		led, err := authC.Get(ctx, "/api/v1/credits/ledger")
 		t.AssertNil(err)
 		jled := gjson.New(led.ReadAllString())
 		led.Close()
-		t.Assert(jled.Get("data.total").Int(), 1)
-		t.Assert(jled.Get("data.entries.0.delta").Int(), 10)
-		t.Assert(jled.Get("data.entries.0.source").String(), "checkin")
+		t.Assert(jled.Get("total").Int(), 1)
+		t.Assert(jled.Get("entries.0.delta").Int(), 10)
+		t.Assert(jled.Get("entries.0.source").String(), "checkin")
 
 		// ── 5. Points checkout (cost 5 ≤ balance 10) → grant, balance 5 ────────
 		redeemBody := `{"items":[{"siteKey":"resource","externalId":"pts-1","variantId":"points-basic","pointsCost":999,"title":"Tampered Points Resource","quantity":1}]}`
@@ -649,16 +644,15 @@ func TestCommerceM2_CheckinAndPoints(t *testing.T) {
 		t.AssertNil(err)
 		jrd := gjson.New(rd.ReadAllString())
 		rd.Close()
-		t.Assert(jrd.Get("code").String(), "ok")
-		t.Assert(jrd.Get("data.balance").Int(), 5)
+		t.Assert(jrd.Get("balance").Int(), 5)
 
 		// access for the redeemed product → entitled
 		acc, err := authC.Get(ctx, "/api/v1/access?siteKey=resource&externalId=pts-1")
 		t.AssertNil(err)
 		jacc := gjson.New(acc.ReadAllString())
 		acc.Close()
-		t.Assert(jacc.Get("data.entitled").Bool(), true)
-		t.Assert(jacc.Get("data.reason").String(), "ok")
+		t.Assert(jacc.Get("entitled").Bool(), true)
+		t.Assert(jacc.Get("reason").String(), "ok")
 
 		// ── 6. Redeem again → blocked by catalog purchase limit ───────────────
 		rd2, err := authC.Post(ctx, "/api/v1/checkouts/points", redeemBody)
@@ -678,7 +672,7 @@ func TestCommerceM2_CheckinAndPoints(t *testing.T) {
 
 		balx, err := authC.Get(ctx, "/api/v1/credits/balance")
 		t.AssertNil(err)
-		t.Assert(gjson.New(balx.ReadAllString()).Get("data.balance").Int(), 5)
+		t.Assert(gjson.New(balx.ReadAllString()).Get("balance").Int(), 5)
 		balx.Close()
 
 		// access for pts-2 → not entitled, reason insufficient_points + required.pointsCost
@@ -686,8 +680,8 @@ func TestCommerceM2_CheckinAndPoints(t *testing.T) {
 		t.AssertNil(err)
 		jaccx := gjson.New(accx.ReadAllString())
 		accx.Close()
-		t.Assert(jaccx.Get("data.entitled").Bool(), false)
-		t.Assert(jaccx.Get("data.reason").String(), "insufficient_points")
-		t.Assert(jaccx.Get("data.required.pointsCost").Int(), 9999)
+		t.Assert(jaccx.Get("entitled").Bool(), false)
+		t.Assert(jaccx.Get("reason").String(), "insufficient_points")
+		t.Assert(jaccx.Get("required.pointsCost").Int(), 9999)
 	})
 }

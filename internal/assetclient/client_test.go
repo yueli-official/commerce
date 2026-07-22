@@ -26,6 +26,7 @@ func TestClientCreateDeliveryMintsAssetGrant(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "ASSET-TOKEN"})
 		case "/api/v1/delivery-grants":
+			w.Header().Set("Content-Type", "application/json")
 			sawGrant = true
 			if got := r.Header.Get("Authorization"); got != "Bearer ASSET-TOKEN" {
 				t.Fatalf("authorization = %q, want bearer token", got)
@@ -37,10 +38,7 @@ func TestClientCreateDeliveryMintsAssetGrant(t *testing.T) {
 			if body["assetId"] != "asset-123" || body["subjectId"] != "buyer@example.com" {
 				t.Fatalf("unexpected grant body: %+v", body)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"code": "ok",
-				"data": map[string]string{"url": "https://asset.example/grants/TOKEN", "expiresAt": expires},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"url": "https://asset.example/grants/TOKEN", "expiresAt": expires})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}

@@ -51,9 +51,7 @@ func TestCurrentCheckoutItemUsesAuthoritativeShopProductSnapshot(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"code":"ok",
-			"data":{
-				"product":{
+			"product":{
 					"id":"product-1",
 					"title":"Design Pack",
 					"status":"active",
@@ -70,7 +68,6 @@ func TestCurrentCheckoutItemUsesAuthoritativeShopProductSnapshot(t *testing.T) {
 						"deliveryPayload":{"updatePolicy":"latest","access":{"maxDownloads":1}},
 						"deliveryItems":[{"kind":"asset_file","assetId":"asset-real","enabled":true,"required":true}]
 					}]
-				}
 			}
 		}`))
 	}))
@@ -98,8 +95,7 @@ func TestCurrentCheckoutItemRejectsInactiveProduct(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"code":"ok",
-			"data":{"product":{"id":"product-1","title":"Draft Pack","status":"draft","variants":[]}}
+			"product":{"id":"product-1","title":"Draft Pack","status":"draft","variants":[]}
 		}`))
 	}))
 	defer server.Close()

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	foundationhttpclient "github.com/yueli-official/foundation/go/httpclient"
 	"platform/gokit/observability"
 )
 
@@ -87,21 +88,11 @@ func (c *Client) Send(ctx context.Context, in SendInput) (SendOutput, error) {
 		return SendOutput{}, fmt.Errorf("notification service unreachable: %w", err)
 	}
 	defer resp.Body.Close()
-	var env struct {
-		Code    string     `json:"code"`
-		Message string     `json:"message"`
-		Data    SendOutput `json:"data"`
+	out, err := foundationhttpclient.DecodeJSON[SendOutput](resp, foundationhttpclient.Limits{})
+	if err != nil {
+		return SendOutput{}, fmt.Errorf("notification send failed: %w", err)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		return SendOutput{}, fmt.Errorf("notification response decode: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || env.Code != "ok" {
-		if env.Message == "" {
-			env.Message = env.Code
-		}
-		return SendOutput{}, fmt.Errorf("notification send failed: %s", env.Message)
-	}
-	return env.Data, nil
+	return out, nil
 }
 
 func (c *Client) accessToken(ctx context.Context) (string, error) {

@@ -6,7 +6,6 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 
 	foundationauth "github.com/yueli-official/foundation/go/auth"
-	"platform/gokit/response"
 	"platform/services/commerce/internal/commerceerr"
 )
 
@@ -50,7 +49,5 @@ func Middleware(resolver *Resolver) func(r *ghttp.Request) {
 }
 
 func writeForbidden(r *ghttp.Request) {
-	r.Response.ClearBuffer()
-	r.Response.WriteHeader(403)
-	r.Response.WriteJson(response.Fail(commerceerr.CodeForbidden, "trusted site context is invalid", nil))
+	r.SetError(commerceerr.Forbidden())
 }

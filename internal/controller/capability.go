@@ -81,7 +81,7 @@ func (controller *Capability) ProviderHealthCheck(ctx context.Context, req *v1.A
 		return nil, err
 	}
 	actor := principal.ActorKey()
-	if allowed, _, _ := controller.healthLimiter.Allow(actor + "|" + strings.TrimSpace(req.Key)); !allowed {
+	if decision := controller.healthLimiter.Evaluate(actor + "|" + strings.TrimSpace(req.Key)); !decision.Allowed {
 		return nil, commerceerr.HealthCheckRateLimited(req.Key)
 	}
 	snapshot, err := controller.snapshotAuthorized(ctx)

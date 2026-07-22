@@ -10,7 +10,6 @@ import (
 	"platform/gokit/capability"
 	"platform/gokit/ghttpx"
 	"platform/gokit/healthcheck"
-	"platform/gokit/response"
 	"platform/paykit"
 	"platform/services/commerce/internal/controller"
 	"platform/services/commerce/internal/dao"
@@ -42,6 +41,7 @@ type Deps struct {
 
 // Configure mounts the commerce-service routes onto s.
 func Configure(s *ghttp.Server, d Deps) {
+	apiMiddleware := ghttpx.NewMiddleware(ghttpx.MustRateLimiterFromEnvironment(), ghttpx.ForwardedClientIPKey)
 	s.Use(ghttpx.TraceRouteMiddleware)
 	currentCheckout := d.CurrentCheckout
 	if currentCheckout == nil && d.CurrentDelivery != nil {
@@ -61,9 +61,9 @@ func Configure(s *ghttp.Server, d Deps) {
 
 	// ── Public: liveness ────────────────────────────────────────────────────
 	s.Group("/", func(grp *ghttp.RouterGroup) {
-		grp.Middleware(ghttpx.Middleware)
+		grp.Middleware(apiMiddleware)
 		grp.GET("/healthz", func(r *ghttp.Request) {
-			r.Response.WriteJson(response.OK(map[string]any{"status": "up"}))
+			r.Response.WriteJson(map[string]any{"status": "up"})
 		})
 		grp.GET("/readyz", healthcheck.Handler(map[string]healthcheck.Check{"database": healthcheck.Database}))
 	})
@@ -71,7 +71,7 @@ func Configure(s *ghttp.Server, d Deps) {
 	if d.Capabilities != nil {
 		capabilityCtrl := controller.NewCapability(svc, d.Capabilities, d.CapabilityService, d.CapabilityScope, d.CapabilityProbeScope)
 		s.Group("/", func(grp *ghttp.RouterGroup) {
-			grp.Middleware(ghttpx.Middleware, authhttp.Required(d.Verifier))
+			grp.Middleware(apiMiddleware, authhttp.Required(d.Verifier))
 			grp.Bind(capabilityCtrl)
 		})
 	}
@@ -83,14 +83,14 @@ func Configure(s *ghttp.Server, d Deps) {
 		if gw, ok := d.Registry["alipay"]; ok {
 			notifyCtrl := controller.NewNotify("alipay", gw, svc)
 			s.Group("/", func(grp *ghttp.RouterGroup) {
-				grp.Middleware(ghttpx.Middleware)
+				grp.Middleware(apiMiddleware)
 				grp.POST("/api/v1/payments/alipay/notify", notifyCtrl.Handle)
 			})
 		}
 		if gw, ok := d.Registry["wechat"]; ok {
 			notifyCtrl := controller.NewNotify("wechat", gw, svc)
 			s.Group("/", func(grp *ghttp.RouterGroup) {
-				grp.Middleware(ghttpx.Middleware)
+				grp.Middleware(apiMiddleware)
 				grp.POST("/api/v1/payments/wechat/notify", notifyCtrl.Handle)
 			})
 		}
@@ -102,7 +102,7 @@ func Configure(s *ghttp.Server, d Deps) {
 	checkoutCtrl := controller.NewCheckout(svc, d.Registry, d.NotifyURL, d.ReturnURL, d.SiteContext)
 	paymentConfigCtrl := controller.NewPaymentConfig(svc, d.Registry)
 	s.Group("/", func(grp *ghttp.RouterGroup) {
-		grp.Middleware(ghttpx.Middleware, authhttp.Optional(d.Verifier), sitecontext.Middleware(d.SiteContext))
+		grp.Middleware(apiMiddleware, authhttp.Optional(d.Verifier), sitecontext.Middleware(d.SiteContext))
 		grp.Bind(checkoutCtrl)
 		grp.Bind(paymentConfigCtrl)
 	})
@@ -113,7 +113,7 @@ func Configure(s *ghttp.Server, d Deps) {
 	creditsCtrl := controller.NewCredits(svc)
 	adminOrderCtrl := controller.NewAdminOrder(svc, d.Registry)
 	s.Group("/", func(grp *ghttp.RouterGroup) {
-		grp.Middleware(ghttpx.Middleware, authhttp.Required(d.Verifier), sitecontext.Middleware(d.SiteContext))
+		grp.Middleware(apiMiddleware, authhttp.Required(d.Verifier), sitecontext.Middleware(d.SiteContext))
 		grp.Bind(accessCtrl)
 		grp.Bind(checkinCtrl)
 		grp.Bind(creditsCtrl)
@@ -124,7 +124,7 @@ func Configure(s *ghttp.Server, d Deps) {
 	if d.DevSettle {
 		settleCtrl := controller.NewDevSettle(svc)
 		s.Group("/", func(grp *ghttp.RouterGroup) {
-			grp.Middleware(ghttpx.Middleware)
+			grp.Middleware(apiMiddleware)
 			grp.Bind(settleCtrl)
 		})
 	}

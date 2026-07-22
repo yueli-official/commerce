@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	foundationhttpclient "github.com/yueli-official/foundation/go/httpclient"
 	"platform/gokit/observability"
 )
 
@@ -91,34 +92,24 @@ func (c *Client) CreateDelivery(ctx context.Context, in DeliveryInput) (Delivery
 		return DeliveryOutput{}, fmt.Errorf("asset delivery grant unreachable: %w", err)
 	}
 	defer resp.Body.Close()
-	var env struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-		Data    struct {
-			URL       string `json:"url"`
-			ExpiresAt string `json:"expiresAt"`
-		} `json:"data"`
+	out, err := foundationhttpclient.DecodeJSON[struct {
+		URL       string `json:"url"`
+		ExpiresAt string `json:"expiresAt"`
+	}](resp, foundationhttpclient.Limits{})
+	if err != nil {
+		return DeliveryOutput{}, fmt.Errorf("asset delivery grant failed: %w", err)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		return DeliveryOutput{}, fmt.Errorf("asset delivery grant decode: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || env.Code != "ok" {
-		if env.Message == "" {
-			env.Message = env.Code
-		}
-		return DeliveryOutput{}, fmt.Errorf("asset delivery grant failed: %s", env.Message)
-	}
-	if strings.TrimSpace(env.Data.URL) == "" {
+	if strings.TrimSpace(out.URL) == "" {
 		return DeliveryOutput{}, fmt.Errorf("asset delivery grant returned empty url")
 	}
 	var exp time.Time
-	if env.Data.ExpiresAt != "" {
-		exp, err = time.Parse(time.RFC3339, env.Data.ExpiresAt)
+	if out.ExpiresAt != "" {
+		exp, err = time.Parse(time.RFC3339, out.ExpiresAt)
 		if err != nil {
 			return DeliveryOutput{}, fmt.Errorf("asset delivery expiry parse: %w", err)
 		}
 	}
-	return DeliveryOutput{URL: env.Data.URL, ExpiresAt: exp}, nil
+	return DeliveryOutput{URL: out.URL, ExpiresAt: exp}, nil
 }
 
 func (c *Client) accessToken(ctx context.Context) (string, error) {

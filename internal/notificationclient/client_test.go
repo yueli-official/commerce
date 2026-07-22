@@ -10,7 +10,7 @@ import (
 	"platform/services/commerce/internal/notificationclient"
 )
 
-func TestClientSendsNotificationEnvelope(t *testing.T) {
+func TestClientSendsNotification(t *testing.T) {
 	var saw bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/oauth2/token" {
@@ -24,6 +24,7 @@ func TestClientSendsNotificationEnvelope(t *testing.T) {
 			return
 		}
 		saw = true
+		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path != "/api/v1/notifications/send" {
 			t.Fatalf("path = %s", r.URL.Path)
 		}
@@ -37,10 +38,7 @@ func TestClientSendsNotificationEnvelope(t *testing.T) {
 		if body.Scene != "commerce.delivery_ready" || body.Recipient.Email != "buyer@example.com" {
 			t.Fatalf("unexpected request body: %+v", body)
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"code": "ok",
-			"data": map[string]any{"messageId": "msg-1", "status": "sent", "provider": "dev"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]any{"messageId": "msg-1", "status": "sent", "provider": "dev"})
 	}))
 	defer srv.Close()
 

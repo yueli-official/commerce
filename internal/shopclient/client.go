@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	foundationhttpclient "github.com/yueli-official/foundation/go/httpclient"
 	"platform/gokit/observability"
 )
 
@@ -121,17 +122,13 @@ func (c *Client) product(ctx context.Context, productID string) (productView, er
 		return productView{}, fmt.Errorf("shop current delivery unreachable: %w", err)
 	}
 	defer resp.Body.Close()
-	var env productEnvelope
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		return productView{}, fmt.Errorf("shop current delivery decode: %w", err)
+	out, err := foundationhttpclient.DecodeJSON[struct {
+		Product productView `json:"product"`
+	}](resp, foundationhttpclient.Limits{})
+	if err != nil {
+		return productView{}, fmt.Errorf("shop current delivery failed: %w", err)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || env.Code != "ok" {
-		if env.Message == "" {
-			env.Message = env.Code
-		}
-		return productView{}, fmt.Errorf("shop current delivery failed: %s", env.Message)
-	}
-	return env.Data.Product, nil
+	return out.Product, nil
 }
 
 func selectVariant(variants []variantView, variantID string) *variantView {
@@ -178,14 +175,6 @@ func variantDelivery(v variantView) (CurrentDeliveryOutput, error) {
 	default:
 		return CurrentDeliveryOutput{}, fmt.Errorf("unsupported shop delivery kind: %s", kind)
 	}
-}
-
-type productEnvelope struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	Data    struct {
-		Product productView `json:"product"`
-	} `json:"data"`
 }
 
 type productView struct {
