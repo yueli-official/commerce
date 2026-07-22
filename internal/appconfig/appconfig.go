@@ -23,17 +23,19 @@ import (
 
 // JWKS holds the IdP key/issuer config for the Foundation auth verifier.
 type JWKS struct {
-	URL      string
-	Issuer   string
-	Audience string
+	URL               string
+	Issuer            string
+	Audience          string
+	AllowLoopbackHTTP bool
 }
 
 // LoadJWKS reads commerce.jwks.* from the GoFrame config.
 func LoadJWKS(ctx context.Context) JWKS {
 	return JWKS{
-		URL:      g.Cfg().MustGet(ctx, "commerce.jwks.url").String(),
-		Issuer:   g.Cfg().MustGet(ctx, "commerce.jwks.issuer").String(),
-		Audience: g.Cfg().MustGet(ctx, "commerce.jwks.audience").String(),
+		URL:               g.Cfg().MustGet(ctx, "commerce.jwks.url").String(),
+		Issuer:            g.Cfg().MustGet(ctx, "commerce.jwks.issuer").String(),
+		Audience:          g.Cfg().MustGet(ctx, "commerce.jwks.audience").String(),
+		AllowLoopbackHTTP: g.Cfg().MustGet(ctx, "commerce.jwks.allowLoopbackHttp", false).Bool(),
 	}
 }
 
