@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"platform/gokit/capability"
+	"platform/gokit/notificationclient"
 	"platform/paykit"
-	"platform/services/commerce/internal/notificationclient"
 	"platform/services/commerce/internal/service"
 )
 

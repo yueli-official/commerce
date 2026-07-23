@@ -12,9 +12,9 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	"platform/gokit/capability"
+	"platform/gokit/notificationclient"
 	"platform/paykit"
 	"platform/services/commerce/internal/assetclient"
-	"platform/services/commerce/internal/notificationclient"
 	"platform/services/commerce/internal/paymentcap"
 	"platform/services/commerce/internal/service"
 	"platform/services/commerce/internal/shopclient"
