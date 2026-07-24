@@ -13,6 +13,7 @@ import (
 	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/model"
 	"platform/services/commerce/internal/paymentrecovery"
+	"platform/services/commerce/internal/recoveryops"
 	"platform/services/commerce/internal/service"
 )
 
@@ -116,14 +117,19 @@ func (c *AdminOrder) RefundOrder(ctx context.Context, req *v1.AdminOrderRefundRe
 	if err := c.svc.MarkRefundSubmitting(ctx, refund.RefundNo); err != nil {
 		return nil, err
 	}
-	out, err := gw.Refund(ctx, paykit.RefundIn{
+	refundInput := paykit.RefundIn{
 		OrderNo: order.OrderNo, RefundNo: refund.RefundNo,
 		ProviderTxID: order.ProviderTxID, AmountCents: refund.AmountCents,
 		TotalAmountCents: order.AmountCents, Currency: order.Currency,
 		Reason: refund.Reason, IdempotencyKey: refund.IdempotencyKey,
-	})
+	}
+	out, err := gw.Refund(ctx, refundInput)
 	if err != nil {
 		return nil, errs.New(commerceerr.CodeGatewayFailed, "payment gateway error", nil)
+	}
+	out, err = paykit.NormalizeRefundResult(refundInput, out)
+	if err != nil {
+		return nil, errs.New(commerceerr.CodeGatewayFailed, "invalid payment gateway response", nil)
 	}
 	status, ok := recoveryRefundStatus(out)
 	if !ok {
@@ -160,6 +166,105 @@ func (c *AdminOrder) RefundOrder(ctx context.Context, req *v1.AdminOrderRefundRe
 		RefundNo: accepted.RefundNo, ProviderID: accepted.ProviderRefundID,
 		Status: string(accepted.Status), OrderStatus: updatedOrder.Status,
 	}, nil
+}
+
+func (c *AdminOrder) ListAssetGrantRecoveries(
+	ctx context.Context,
+	req *v1.AdminListAssetGrantRecoveriesReq,
+) (*v1.AdminListAssetGrantRecoveriesRes, error) {
+	if err := requireAdmin(ctx); err != nil {
+		return nil, err
+	}
+	grants, total, err := c.svc.ListAssetGrantRecoveries(
+		ctx, req.State, req.Limit, req.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]v1.AdminAssetGrantRecoveryView, 0, len(grants))
+	for _, grant := range grants {
+		view := v1.AdminAssetGrantRecoveryView{
+			ID: grant.ID, OrderID: grant.OrderID,
+			DeliveryGrantID: grant.DeliveryGrantID, AssetID: grant.AssetID,
+			ProviderGrantID: grant.ProviderGrantID, State: grant.State,
+			ExpiresAt:      grant.ExpiresAt.UTC().Format(time.RFC3339),
+			RevokeAttempts: grant.RevokeAttempts, LastError: grant.LastError,
+			CreatedAt: grant.CreatedAt.UTC().Format(time.RFC3339),
+			UpdatedAt: grant.UpdatedAt.UTC().Format(time.RFC3339),
+		}
+		if grant.NextRevokeAt != nil {
+			view.NextRevokeAt = grant.NextRevokeAt.UTC().Format(time.RFC3339)
+		}
+		if grant.RevokedAt != nil {
+			view.RevokedAt = grant.RevokedAt.UTC().Format(time.RFC3339)
+		}
+		out = append(out, view)
+	}
+	return &v1.AdminListAssetGrantRecoveriesRes{Grants: out, Total: total}, nil
+}
+
+func (c *AdminOrder) RetryAssetGrantRecovery(
+	ctx context.Context,
+	req *v1.AdminRetryAssetGrantRecoveryReq,
+) (*v1.AdminRetryAssetGrantRecoveryRes, error) {
+	if err := requireAdmin(ctx); err != nil {
+		return nil, err
+	}
+	queued, err := c.svc.RetryAssetGrantRecovery(ctx, req.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !queued {
+		return nil, commerceerr.InvalidRequest("asset grant revocation is not pending")
+	}
+	return &v1.AdminRetryAssetGrantRecoveryRes{Queued: true}, nil
+}
+
+func (c *AdminOrder) ListRecoveryCases(
+	ctx context.Context,
+	req *v1.AdminListRecoveryCasesReq,
+) (*v1.AdminListRecoveryCasesRes, error) {
+	if err := requireAdmin(ctx); err != nil {
+		return nil, err
+	}
+	cases, total, err := c.svc.ListRecoveryCases(
+		ctx, req.Kind, req.State, req.Limit, req.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]v1.AdminRecoveryCaseView, 0, len(cases))
+	for _, item := range cases {
+		view := v1.AdminRecoveryCaseView{
+			Kind: item.Kind, ID: item.ID, OrderID: item.OrderID, OrderNo: item.OrderNo,
+			Provider: item.Provider, State: item.State, Attempts: item.Attempts,
+			LastError: item.LastError, CreatedAt: item.CreatedAt.UTC().Format(time.RFC3339),
+			UpdatedAt: item.UpdatedAt.UTC().Format(time.RFC3339),
+			Retryable: item.Kind != recoveryops.KindDispute,
+		}
+		if item.NextActionAt != nil {
+			view.NextActionAt = item.NextActionAt.UTC().Format(time.RFC3339)
+		}
+		out = append(out, view)
+	}
+	return &v1.AdminListRecoveryCasesRes{Cases: out, Total: total}, nil
+}
+
+func (c *AdminOrder) RetryRecoveryCase(
+	ctx context.Context,
+	req *v1.AdminRetryRecoveryCaseReq,
+) (*v1.AdminRetryRecoveryCaseRes, error) {
+	if err := requireAdmin(ctx); err != nil {
+		return nil, err
+	}
+	queued, err := c.svc.RetryRecoveryCase(ctx, req.Kind, req.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !queued {
+		return nil, commerceerr.InvalidRequest("recovery case is not retryable")
+	}
+	return &v1.AdminRetryRecoveryCaseRes{Queued: true}, nil
 }
 
 func recoveryRefundStatus(out *paykit.RefundOut) (paymentrecovery.RefundStatus, bool) {

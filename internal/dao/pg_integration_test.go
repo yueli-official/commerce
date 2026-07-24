@@ -81,6 +81,8 @@ func TestPGSchema(t *testing.T) {
 	// Drop any newer Commerce schema in FK-safe order before exercising the
 	// original DAO contract against 0001.
 	for _, table := range []string{
+		"audit_mirror_outbox", "audit_retention_receipts", "audit_legal_holds",
+		"audit_event_receipts", "audit_events", "audit_action_definitions", "audit_instances",
 		"webhook_replay_receipts", "webhook_inbound_receipts",
 		"webhook_attempts", "webhook_deliveries", "webhook_events",
 		"webhook_subscription_revisions", "webhook_subscriptions",
@@ -88,6 +90,7 @@ func TestPGSchema(t *testing.T) {
 		"webhook_secret_material", "webhook_instances",
 		"work_schedules", "work_attempts", "work_jobs", "work_instances",
 		"provider_events", "disputes", "refunds", "payment_attempts",
+		"asset_delivery_grants",
 		"delivery_grants", "payment_events", "order_items", "checkin_records",
 		"credits_ledger", "credits_balances", "commerce_buyers",
 		"commerce_payment_methods", "entitlements", "orders", "products",

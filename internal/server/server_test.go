@@ -304,6 +304,7 @@ func pgSetup(t *gtest.T) *dao.PG {
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS credits_balances CASCADE")
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS commerce_payment_methods CASCADE")
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS payment_events CASCADE")
+	_, _ = cdb.Exec("DROP TABLE IF EXISTS asset_delivery_grants CASCADE")
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS delivery_grants CASCADE")
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS order_items CASCADE")
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS commerce_buyers CASCADE")
@@ -311,6 +312,13 @@ func pgSetup(t *gtest.T) *dao.PG {
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS orders CASCADE")
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS products CASCADE")
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS schema_migrations CASCADE")
+	_, _ = cdb.Exec("DROP TABLE IF EXISTS audit_mirror_outbox CASCADE")
+	_, _ = cdb.Exec("DROP TABLE IF EXISTS audit_retention_receipts CASCADE")
+	_, _ = cdb.Exec("DROP TABLE IF EXISTS audit_legal_holds CASCADE")
+	_, _ = cdb.Exec("DROP TABLE IF EXISTS audit_event_receipts CASCADE")
+	_, _ = cdb.Exec("DROP TABLE IF EXISTS audit_events CASCADE")
+	_, _ = cdb.Exec("DROP TABLE IF EXISTS audit_action_definitions CASCADE")
+	_, _ = cdb.Exec("DROP TABLE IF EXISTS audit_instances CASCADE")
 	migrations, err := filepath.Glob("../../manifest/sql/migrations/*.up.sql")
 	t.AssertNil(err)
 	sort.Strings(migrations)
@@ -514,10 +522,9 @@ func TestCheckoutSyncPaymentQuerySettlesOrder(t *testing.T) {
 		t.AssertNE(orderNo, "")
 
 		fake.queryOut = paykit.QueryPaymentOut{
-			Success:      true,
-			OrderNo:      orderNo,
-			ProviderTxID: "ALI-SYNC-TX-1",
-			AmountCents:  100,
+			Success: true, OrderNo: orderNo, ProviderTxID: "ALI-SYNC-TX-1",
+			AmountCents: 100, Currency: "CNY",
+			Status: paykit.PaymentStatusSettled, ProviderStatus: "TRADE_SUCCESS",
 		}
 		syncResp, err := authC.Post(ctx, "/api/v1/checkouts/"+orderNo+"/sync", `{}`)
 		t.AssertNil(err)

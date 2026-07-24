@@ -81,24 +81,59 @@ type DuePaymentAttempt struct {
 }
 
 type RefundRecord struct {
-	ID               string       `orm:"id"`
-	OrderID          string       `orm:"order_id"`
-	PaymentAttemptID string       `orm:"payment_attempt_id"`
-	Provider         string       `orm:"provider"`
-	Merchant         string       `orm:"merchant_account"`
-	RefundNo         string       `orm:"refund_no"`
-	IdempotencyKey   string       `orm:"idempotency_key"`
-	ProviderRefundID string       `orm:"provider_refund_id"`
-	AmountCents      int          `orm:"amount_cents"`
-	Currency         string       `orm:"currency"`
-	Reason           string       `orm:"reason"`
-	Status           RefundStatus `orm:"status"`
-	RequestedBy      string       `orm:"requested_by"`
-	Revision         uint64       `orm:"revision"`
-	LastObservedAt   *time.Time   `orm:"last_observed_at"`
-	CompletedAt      *time.Time   `orm:"completed_at"`
-	CreatedAt        time.Time    `orm:"created_at"`
-	UpdatedAt        time.Time    `orm:"updated_at"`
+	ID                string       `orm:"id"`
+	OrderID           string       `orm:"order_id"`
+	PaymentAttemptID  string       `orm:"payment_attempt_id"`
+	Provider          string       `orm:"provider"`
+	Merchant          string       `orm:"merchant_account"`
+	RefundNo          string       `orm:"refund_no"`
+	IdempotencyKey    string       `orm:"idempotency_key"`
+	ProviderRefundID  string       `orm:"provider_refund_id"`
+	AmountCents       int          `orm:"amount_cents"`
+	Currency          string       `orm:"currency"`
+	Reason            string       `orm:"reason"`
+	Status            RefundStatus `orm:"status"`
+	RequestedBy       string       `orm:"requested_by"`
+	Revision          uint64       `orm:"revision"`
+	LastObservedAt    *time.Time   `orm:"last_observed_at"`
+	LastReconciledAt  *time.Time   `orm:"last_reconciled_at"`
+	NextReconcileAt   *time.Time   `orm:"next_reconcile_at"`
+	ReconcileFailures int          `orm:"reconciliation_failures"`
+	ReconcileError    string       `orm:"reconciliation_error"`
+	CompletedAt       *time.Time   `orm:"completed_at"`
+	CreatedAt         time.Time    `orm:"created_at"`
+	UpdatedAt         time.Time    `orm:"updated_at"`
+}
+
+type DueRefund struct {
+	ID              string    `orm:"id"`
+	OrderNo         string    `orm:"order_no"`
+	RefundNo        string    `orm:"refund_no"`
+	Provider        string    `orm:"provider"`
+	NextReconcileAt time.Time `orm:"next_reconcile_at"`
+}
+
+type DisputeRecord struct {
+	ID                string        `orm:"id"`
+	OrderID           string        `orm:"order_id"`
+	PaymentAttemptID  string        `orm:"payment_attempt_id"`
+	Provider          string        `orm:"provider"`
+	Merchant          string        `orm:"merchant_account"`
+	ProviderDisputeID string        `orm:"provider_dispute_id"`
+	ProviderTxID      string        `orm:"provider_tx_id"`
+	Status            DisputeStatus `orm:"status"`
+	ProviderStatus    string        `orm:"provider_status"`
+	OutcomeCode       string        `orm:"outcome_code"`
+	AmountCents       int           `orm:"amount_cents"`
+	Currency          string        `orm:"currency"`
+	ReasonCode        string        `orm:"reason_code"`
+	Revision          uint64        `orm:"revision"`
+	OpenedAt          *time.Time    `orm:"opened_at"`
+	DueAt             *time.Time    `orm:"due_at"`
+	ResolvedAt        *time.Time    `orm:"resolved_at"`
+	LastObservedAt    *time.Time    `orm:"last_observed_at"`
+	CreatedAt         time.Time     `orm:"created_at"`
+	UpdatedAt         time.Time     `orm:"updated_at"`
 }
 
 func DigestPayload(payload []byte) string {
@@ -144,6 +179,32 @@ func NewRefundEvent(observation RefundObservation, providerStatus string) (Provi
 		OrderNo:          observation.OrderNo, ProviderObjectID: observation.ProviderRefundID,
 		AmountCents: observation.Money.AmountCents, Currency: observation.Money.Currency,
 		OccurredAt: &observation.OccurredAt, Processing: ProcessingReceived,
+	}
+	if event.ProviderStatus == "" {
+		event.ProviderStatus = event.NormalizedStatus
+	}
+	return event, nil
+}
+
+func NewDisputeEvent(observation DisputeObservation) (ProviderEvent, error) {
+	observation = normalizeDisputeObservation(observation)
+	if err := validateDisputeObservation(observation); err != nil {
+		return ProviderEvent{}, err
+	}
+	event := ProviderEvent{
+		Provider: observation.Provider, Merchant: observation.Merchant,
+		Source: observation.Source, Operation: OperationDispute,
+		IdempotencyKey:   observation.IdempotencyKey,
+		ProviderEventID:  observation.IdempotencyKey,
+		PayloadDigest:    observation.PayloadDigest,
+		ProviderStatus:   observation.ProviderStatus,
+		NormalizedStatus: string(observation.Status),
+		OrderNo:          observation.OrderNo,
+		ProviderObjectID: observation.ProviderDisputeID,
+		AmountCents:      observation.Money.AmountCents,
+		Currency:         observation.Money.Currency,
+		OccurredAt:       &observation.OccurredAt,
+		Processing:       ProcessingReceived,
 	}
 	if event.ProviderStatus == "" {
 		event.ProviderStatus = event.NormalizedStatus

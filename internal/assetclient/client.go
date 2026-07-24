@@ -44,6 +44,7 @@ type DeliveryInput struct {
 }
 
 type DeliveryOutput struct {
+	GrantID   string
 	URL       string
 	ExpiresAt time.Time
 }
@@ -93,14 +94,15 @@ func (c *Client) CreateDelivery(ctx context.Context, in DeliveryInput) (Delivery
 	}
 	defer resp.Body.Close()
 	out, err := foundationhttpclient.DecodeJSON[struct {
+		GrantID   string `json:"grantId"`
 		URL       string `json:"url"`
 		ExpiresAt string `json:"expiresAt"`
 	}](resp, foundationhttpclient.Limits{})
 	if err != nil {
 		return DeliveryOutput{}, fmt.Errorf("asset delivery grant failed: %w", err)
 	}
-	if strings.TrimSpace(out.URL) == "" {
-		return DeliveryOutput{}, fmt.Errorf("asset delivery grant returned empty url")
+	if strings.TrimSpace(out.GrantID) == "" || strings.TrimSpace(out.URL) == "" {
+		return DeliveryOutput{}, fmt.Errorf("asset delivery grant returned incomplete result")
 	}
 	var exp time.Time
 	if out.ExpiresAt != "" {
@@ -109,7 +111,39 @@ func (c *Client) CreateDelivery(ctx context.Context, in DeliveryInput) (Delivery
 			return DeliveryOutput{}, fmt.Errorf("asset delivery expiry parse: %w", err)
 		}
 	}
-	return DeliveryOutput{URL: out.URL, ExpiresAt: exp}, nil
+	return DeliveryOutput{GrantID: out.GrantID, URL: out.URL, ExpiresAt: exp}, nil
+}
+
+func (c *Client) RevokeDelivery(ctx context.Context, grantID string) error {
+	grantID = strings.TrimSpace(grantID)
+	if grantID == "" {
+		return fmt.Errorf("asset delivery grant id is required")
+	}
+	token, err := c.accessToken(ctx)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.base+"/api/v1/admin/assets/grants/"+url.PathEscape(grantID)+"/revoke",
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("asset delivery grant revoke unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	if _, err := foundationhttpclient.DecodeJSON[struct {
+		Revoked bool `json:"revoked"`
+	}](resp, foundationhttpclient.Limits{}); err != nil {
+		return fmt.Errorf("asset delivery grant revoke failed: %w", err)
+	}
+	return nil
 }
 
 func (c *Client) accessToken(ctx context.Context) (string, error) {

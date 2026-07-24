@@ -62,6 +62,13 @@ func resetSchema(t *testing.T, db gdb.DB) {
 	t.Helper()
 	ctx := context.Background()
 	for _, stmt := range []string{
+		"DROP TABLE IF EXISTS audit_mirror_outbox CASCADE",
+		"DROP TABLE IF EXISTS audit_retention_receipts CASCADE",
+		"DROP TABLE IF EXISTS audit_legal_holds CASCADE",
+		"DROP TABLE IF EXISTS audit_event_receipts CASCADE",
+		"DROP TABLE IF EXISTS audit_events CASCADE",
+		"DROP TABLE IF EXISTS audit_action_definitions CASCADE",
+		"DROP TABLE IF EXISTS audit_instances CASCADE",
 		"DROP TABLE IF EXISTS webhook_replay_receipts CASCADE",
 		"DROP TABLE IF EXISTS webhook_inbound_receipts CASCADE",
 		"DROP TABLE IF EXISTS webhook_attempts CASCADE",
@@ -81,6 +88,7 @@ func resetSchema(t *testing.T, db gdb.DB) {
 		"DROP TABLE IF EXISTS disputes CASCADE",
 		"DROP TABLE IF EXISTS refunds CASCADE",
 		"DROP TABLE IF EXISTS payment_attempts CASCADE",
+		"DROP TABLE IF EXISTS asset_delivery_grants CASCADE",
 		"DROP TABLE IF EXISTS delivery_grants",
 		"DROP TABLE IF EXISTS payment_events",
 		"DROP TABLE IF EXISTS order_items",

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"platform/gokit/notificationclient"
 	"platform/paykit"
 	"platform/services/commerce/internal/assetclient"
+	"platform/services/commerce/internal/deliveryrecovery"
 	"platform/services/commerce/internal/paymentcap"
 	"platform/services/commerce/internal/service"
 	"platform/services/commerce/internal/shopclient"
@@ -106,6 +108,61 @@ func (s notificationDeliverySender) SendDelivery(ctx context.Context, in service
 	return nil
 }
 
+type notificationRecoveryNotifier struct {
+	client         *notificationclient.Client
+	recipientEmail string
+}
+
+func BuildRecoveryNotifier(ctx context.Context) deliveryrecovery.FailureNotifier {
+	recipientEmail := strings.TrimSpace(
+		g.Cfg().MustGet(ctx, "commerce.recovery.notification.recipientEmail").String(),
+	)
+	if recipientEmail == "" {
+		return nil
+	}
+	cfg := notificationclient.Config{
+		BaseURL:      g.Cfg().MustGet(ctx, "commerce.notificationService.base_url").String(),
+		TokenURL:     g.Cfg().MustGet(ctx, "commerce.notificationService.token_url").String(),
+		ClientID:     g.Cfg().MustGet(ctx, "commerce.notificationService.client_id").String(),
+		ClientSecret: g.Cfg().MustGet(ctx, "commerce.notificationService.client_secret").String(),
+		Scope:        g.Cfg().MustGet(ctx, "commerce.notificationService.scope", "notification:send").String(),
+	}
+	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.TokenURL) == "" ||
+		strings.TrimSpace(cfg.ClientID) == "" || strings.TrimSpace(cfg.ClientSecret) == "" {
+		g.Log().Warning(ctx, "commerce recovery notification configured without Notification OAuth credentials")
+		return nil
+	}
+	client, err := notificationclient.New(cfg)
+	if err != nil {
+		panic(err)
+	}
+	return notificationRecoveryNotifier{client: client, recipientEmail: recipientEmail}
+}
+
+func (notifier notificationRecoveryNotifier) NotifyDeliveryRevocationFailed(
+	ctx context.Context,
+	notice deliveryrecovery.FailureNotice,
+) {
+	if notifier.client == nil || notifier.recipientEmail == "" {
+		return
+	}
+	_, err := notifier.client.Send(ctx, notificationclient.SendInput{
+		IdempotencyKey: fmt.Sprintf(
+			"commerce.asset_grant_revoke_failed:%s:%d", notice.GrantID, notice.Attempts,
+		),
+		Scene: "commerce.asset_grant_revoke_failed", Channel: "email",
+		Recipient: notificationclient.Recipient{Email: notifier.recipientEmail},
+		Data: map[string]string{
+			"grantId": notice.GrantID, "orderId": notice.OrderID,
+			"providerGrantId": notice.ProviderGrantID,
+			"attempts":        strconv.Itoa(notice.Attempts), "error": notice.Error,
+		},
+	})
+	if err != nil {
+		g.Log().Warningf(ctx, "commerce recovery notification failed grant=%s: %v", notice.GrantID, err)
+	}
+}
+
 type assetDeliveryAdapter struct {
 	client *assetclient.Client
 }
@@ -117,7 +174,13 @@ func (a assetDeliveryAdapter) CreateDelivery(ctx context.Context, in service.Ass
 	if err != nil {
 		return service.AssetDeliveryOutput{}, err
 	}
-	return service.AssetDeliveryOutput{URL: out.URL, ExpiresAt: out.ExpiresAt}, nil
+	return service.AssetDeliveryOutput{
+		GrantID: out.GrantID, URL: out.URL, ExpiresAt: out.ExpiresAt,
+	}, nil
+}
+
+func (a assetDeliveryAdapter) RevokeDelivery(ctx context.Context, grantID string) error {
+	return a.client.RevokeDelivery(ctx, grantID)
 }
 
 func BuildAssetDeliveryClient(ctx context.Context) service.AssetDeliveryClient {
@@ -265,6 +328,7 @@ type PayPal struct {
 	ClientSecret string
 	Sandbox      bool
 	BaseURL      string
+	WebhookID    string
 }
 
 // LoadPayPal reads commerce.paypal.* from the GoFrame config.
@@ -274,6 +338,7 @@ func LoadPayPal(ctx context.Context) PayPal {
 		ClientSecret: g.Cfg().MustGet(ctx, "commerce.paypal.client_secret").String(),
 		Sandbox:      g.Cfg().MustGet(ctx, "commerce.paypal.sandbox", true).Bool(),
 		BaseURL:      g.Cfg().MustGet(ctx, "commerce.paypal.base_url").String(),
+		WebhookID:    g.Cfg().MustGet(ctx, "commerce.paypal.webhook_id").String(),
 	}
 }
 
@@ -322,6 +387,10 @@ func BuildPaymentCapabilityRegistry(registry paykit.Registry, alipay Alipay, pay
 		paypalGateway = gateway("paypal")
 		wechatGateway = gateway("wechat")
 	)
+	paypalOperations := []string{"browser_button", "refund", "server_capture"}
+	if strings.TrimSpace(paypal.WebhookID) != "" {
+		paypalOperations = append(paypalOperations, "dispute")
+	}
 	return paymentcap.New(
 		paymentcap.Definition{
 			Instance: "alipay-primary", Adapter: "alipay", Mode: mode(alipay.Sandbox), Gateway: alipayGateway,
@@ -332,7 +401,7 @@ func BuildPaymentCapabilityRegistry(registry paykit.Registry, alipay Alipay, pay
 		},
 		paymentcap.Definition{
 			Instance: "paypal-primary", Adapter: "paypal", Mode: mode(paypal.Sandbox), Gateway: paypalGateway,
-			Operations: []string{"browser_button", "refund", "server_capture"}, RequiredConfig: []capability.ConfigField{
+			Operations: paypalOperations, RequiredConfig: []capability.ConfigField{
 				field("client_id", paypal.ClientID, false), field("client_secret", paypal.ClientSecret, true),
 			},
 		},

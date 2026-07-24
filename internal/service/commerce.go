@@ -27,8 +27,10 @@ import (
 	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/commercewebhook"
 	"platform/services/commerce/internal/dao"
+	"platform/services/commerce/internal/deliveryrecovery"
 	"platform/services/commerce/internal/model"
 	"platform/services/commerce/internal/paymentrecovery"
+	"platform/services/commerce/internal/recoveryops"
 )
 
 // OrderDesc carries the caller-supplied descriptor for a new order. SiteKey +
@@ -119,6 +121,13 @@ type RefundRequestResult struct {
 	Duplicate bool
 }
 
+type DisputeAcceptanceResult struct {
+	Order      *model.Order
+	Dispute    *paymentrecovery.DisputeRecord
+	Processing paymentrecovery.ProcessingState
+	Duplicate  bool
+}
+
 type DeliveryResult struct {
 	Grant             *model.DeliveryGrant
 	Order             *model.Order
@@ -159,12 +168,17 @@ type AssetDeliveryInput struct {
 }
 
 type AssetDeliveryOutput struct {
+	GrantID   string
 	URL       string
 	ExpiresAt time.Time
 }
 
 type AssetDeliveryClient interface {
 	CreateDelivery(ctx context.Context, in AssetDeliveryInput) (AssetDeliveryOutput, error)
+}
+
+type AssetDeliveryRevoker interface {
+	RevokeDelivery(context.Context, string) error
 }
 
 type CurrentDeliveryInput struct {
@@ -1544,6 +1558,33 @@ func (s *Service) RevokeDelivery(ctx context.Context, orderNo string) (int64, er
 	return revoked, err
 }
 
+func (s *Service) ListAssetGrantRecoveries(
+	ctx context.Context,
+	state string,
+	limit int,
+	offset int,
+) ([]deliveryrecovery.Grant, int, error) {
+	return s.db.ListAssetGrantRevocations(ctx, state, limit, offset)
+}
+
+func (s *Service) RetryAssetGrantRecovery(ctx context.Context, id string) (bool, error) {
+	return s.db.RetryAssetGrantRevocation(ctx, strings.TrimSpace(id))
+}
+
+func (s *Service) ListRecoveryCases(
+	ctx context.Context,
+	kind string,
+	state string,
+	limit int,
+	offset int,
+) ([]recoveryops.Case, int, error) {
+	return s.db.ListRecoveryCases(ctx, kind, state, limit, offset)
+}
+
+func (s *Service) RetryRecoveryCase(ctx context.Context, kind, id string) (bool, error) {
+	return s.db.RetryRecoveryCase(ctx, kind, id)
+}
+
 func (s *Service) MarkRefunded(ctx context.Context, orderNo, providerRefundID string) error {
 	order, err := s.GetOrderByNo(ctx, orderNo)
 	if err != nil {
@@ -1631,6 +1672,27 @@ func (s *Service) MarkRefundSubmitting(ctx context.Context, refundNo string) err
 	return s.db.MarkRefundSubmitting(ctx, refundNo)
 }
 
+func (s *Service) RefundForReconciliation(
+	ctx context.Context,
+	refundNo string,
+) (*paymentrecovery.RefundRecord, *model.Order, error) {
+	refund, err := s.db.RefundByNo(ctx, strings.TrimSpace(refundNo))
+	if err != nil {
+		return nil, nil, err
+	}
+	if refund == nil {
+		return nil, nil, commerceerr.InvalidRequest("refund not found")
+	}
+	order, err := s.db.GetOrderByID(ctx, refund.OrderID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if order == nil {
+		return nil, nil, commerceerr.InvalidRequest("refund order not found")
+	}
+	return refund, order, nil
+}
+
 func (s *Service) AcceptRefundObservation(
 	ctx context.Context,
 	observation paymentrecovery.RefundObservation,
@@ -1690,6 +1752,13 @@ func (s *Service) AcceptRefundObservation(
 		}
 		next, changed, applyErr := paymentrecovery.ApplyRefund(current, observation)
 		if applyErr != nil {
+			if observation.Source == paymentrecovery.SourceQuery {
+				if err := s.db.RecordRefundReconciledTx(
+					ctx, tx, refundRow.ID, current.Status, observation.OccurredAt,
+				); err != nil {
+					return err
+				}
+			}
 			if err := s.db.FinalizeProviderEventTx(
 				ctx, tx, event.ID, order.ID, "", paymentrecovery.ProcessingConflict,
 				applyErr.Error(),
@@ -1700,6 +1769,13 @@ func (s *Service) AcceptRefundObservation(
 			return nil
 		}
 		if !changed {
+			if observation.Source == paymentrecovery.SourceQuery {
+				if err := s.db.RecordRefundReconciledTx(
+					ctx, tx, refundRow.ID, current.Status, observation.OccurredAt,
+				); err != nil {
+					return err
+				}
+			}
 			if err := s.db.FinalizeProviderEventTx(
 				ctx, tx, event.ID, order.ID, "", paymentrecovery.ProcessingIgnored, "",
 			); err != nil {
@@ -1714,6 +1790,13 @@ func (s *Service) AcceptRefundObservation(
 		refundRow.Status = next.Status
 		refundRow.ProviderRefundID = next.ProviderRefundID
 		refundRow.Revision = next.Revision
+		if observation.Source == paymentrecovery.SourceQuery {
+			if err := s.db.RecordRefundReconciledTx(
+				ctx, tx, refundRow.ID, next.Status, observation.OccurredAt,
+			); err != nil {
+				return err
+			}
+		}
 		if observation.Status == paymentrecovery.RefundSucceeded {
 			totalRefunded := order.RefundedAmount + refundRow.AmountCents
 			if totalRefunded > order.AmountCents {
@@ -1750,6 +1833,221 @@ func (s *Service) AcceptRefundObservation(
 		return nil
 	})
 	return accepted, err
+}
+
+func (s *Service) AcceptDisputeObservation(
+	ctx context.Context,
+	observation paymentrecovery.DisputeObservation,
+) (*DisputeAcceptanceResult, error) {
+	event, err := paymentrecovery.NewDisputeEvent(observation)
+	if err != nil {
+		return nil, err
+	}
+	result := &DisputeAcceptanceResult{}
+	err = s.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		persistedEvent, inserted, err := s.db.ReserveProviderEventTx(
+			ctx, tx, &event,
+		)
+		if err != nil {
+			return err
+		}
+		if persistedEvent == nil {
+			return fmt.Errorf("dispute event reservation returned no row")
+		}
+		result.Duplicate = !inserted
+		if !inserted {
+			if !event.SameEvidence(*persistedEvent) {
+				return paymentrecovery.ErrEventConflict
+			}
+			if persistedEvent.Processing == paymentrecovery.ProcessingApplied ||
+				persistedEvent.Processing == paymentrecovery.ProcessingIgnored ||
+				persistedEvent.Processing == paymentrecovery.ProcessingConflict {
+				result.Processing = persistedEvent.Processing
+				dispute, err := s.db.DisputeByProviderIDTxForUpdate(
+					ctx, tx, observation.Provider, observation.Merchant,
+					observation.ProviderDisputeID,
+				)
+				if err != nil {
+					return err
+				}
+				result.Dispute = dispute
+				if dispute != nil && dispute.OrderID != "" {
+					result.Order, err = s.db.GetOrderByID(ctx, dispute.OrderID)
+				}
+				return err
+			}
+			event.ID = persistedEvent.ID
+		}
+
+		order, err := s.db.GetOrderByProviderTxTxForUpdate(
+			ctx, tx, observation.Provider, observation.ProviderTxID,
+		)
+		if err != nil {
+			return err
+		}
+		if order == nil {
+			result.Processing = paymentrecovery.ProcessingIgnored
+			return s.db.FinalizeDisputeProviderEventTx(
+				ctx, tx, event.ID, "", "", result.Processing,
+				"provider transaction is not owned by this deployment",
+			)
+		}
+		result.Order = order
+		observation.OrderNo = order.OrderNo
+		if observation.Money.Currency != strings.ToUpper(order.Currency) ||
+			observation.Money.AmountCents <= 0 ||
+			observation.Money.AmountCents > order.AmountCents {
+			result.Processing = paymentrecovery.ProcessingConflict
+			return s.db.FinalizeDisputeProviderEventTx(
+				ctx, tx, event.ID, order.ID, "", result.Processing,
+				"dispute money does not match the settled order",
+			)
+		}
+		attemptID, err := s.db.PaymentAttemptIDByProviderTxTx(
+			ctx, tx, observation.Provider, observation.Merchant,
+			observation.ProviderTxID,
+		)
+		if err != nil {
+			return err
+		}
+		disputeRow, err := s.db.DisputeByProviderIDTxForUpdate(
+			ctx, tx, observation.Provider, observation.Merchant,
+			observation.ProviderDisputeID,
+		)
+		if err != nil {
+			return err
+		}
+		if disputeRow == nil {
+			dispute, err := paymentrecovery.NewDispute(observation)
+			if err != nil {
+				return err
+			}
+			proposed := disputeRecordFromDomain(order.ID, attemptID, dispute)
+			disputeRow, _, err = s.db.CreateDisputeTx(ctx, tx, proposed)
+			if err != nil {
+				return err
+			}
+			if disputeRow == nil {
+				return fmt.Errorf("dispute creation returned no row")
+			}
+			if err := s.db.ApplyDisputeAccessPolicyTx(
+				ctx, tx, order.ID, dispute.Status,
+				"provider dispute "+dispute.ProviderDisputeID,
+			); err != nil {
+				return err
+			}
+			result.Dispute = disputeRow
+			result.Processing = paymentrecovery.ProcessingApplied
+			return s.db.FinalizeDisputeProviderEventTx(
+				ctx, tx, event.ID, order.ID, disputeRow.ID,
+				result.Processing, "",
+			)
+		}
+		current := disputeDomainFromRecord(disputeRow, order.OrderNo)
+		next, changed, applyErr := paymentrecovery.ApplyDispute(
+			current, observation,
+		)
+		if applyErr != nil {
+			result.Dispute = disputeRow
+			result.Processing = paymentrecovery.ProcessingConflict
+			return s.db.FinalizeDisputeProviderEventTx(
+				ctx, tx, event.ID, order.ID, disputeRow.ID,
+				result.Processing, applyErr.Error(),
+			)
+		}
+		if !changed {
+			result.Dispute = disputeRow
+			result.Processing = paymentrecovery.ProcessingIgnored
+			return s.db.FinalizeDisputeProviderEventTx(
+				ctx, tx, event.ID, order.ID, disputeRow.ID,
+				result.Processing, "",
+			)
+		}
+		if err := s.db.UpdateDisputeTx(
+			ctx, tx, disputeRow.ID, next,
+		); err != nil {
+			return err
+		}
+		if err := s.db.ApplyDisputeAccessPolicyTx(
+			ctx, tx, order.ID, next.Status,
+			"provider dispute "+next.ProviderDisputeID,
+		); err != nil {
+			return err
+		}
+		disputeRow.Status = next.Status
+		disputeRow.ProviderStatus = next.ProviderStatus
+		disputeRow.OutcomeCode = next.OutcomeCode
+		disputeRow.ReasonCode = next.ReasonCode
+		disputeRow.Revision = next.Revision
+		disputeRow.LastObservedAt = timePointer(next.LastObservedAt)
+		result.Dispute = disputeRow
+		result.Processing = paymentrecovery.ProcessingApplied
+		return s.db.FinalizeDisputeProviderEventTx(
+			ctx, tx, event.ID, order.ID, disputeRow.ID,
+			result.Processing, "",
+		)
+	})
+	return result, err
+}
+
+func disputeRecordFromDomain(
+	orderID, paymentAttemptID string,
+	dispute paymentrecovery.Dispute,
+) *paymentrecovery.DisputeRecord {
+	record := &paymentrecovery.DisputeRecord{
+		OrderID: orderID, PaymentAttemptID: paymentAttemptID,
+		Provider: dispute.Provider, Merchant: dispute.Merchant,
+		ProviderDisputeID: dispute.ProviderDisputeID,
+		ProviderTxID:      dispute.ProviderTxID,
+		Status:            dispute.Status, ProviderStatus: dispute.ProviderStatus,
+		OutcomeCode: dispute.OutcomeCode, AmountCents: dispute.Money.AmountCents,
+		Currency: dispute.Money.Currency, ReasonCode: dispute.ReasonCode,
+		Revision: dispute.Revision, LastObservedAt: timePointer(dispute.LastObservedAt),
+	}
+	record.OpenedAt = timePointer(dispute.OpenedAt)
+	record.DueAt = timePointer(dispute.DueAt)
+	switch dispute.Status {
+	case paymentrecovery.DisputeWon, paymentrecovery.DisputeLost,
+		paymentrecovery.DisputeAccepted, paymentrecovery.DisputeClosed:
+		record.ResolvedAt = timePointer(dispute.LastObservedAt)
+	}
+	return record
+}
+
+func disputeDomainFromRecord(
+	record *paymentrecovery.DisputeRecord,
+	orderNo string,
+) paymentrecovery.Dispute {
+	dispute := paymentrecovery.Dispute{
+		Status: record.Status, Provider: record.Provider,
+		Merchant: record.Merchant, OrderNo: orderNo,
+		ProviderTxID:      record.ProviderTxID,
+		ProviderDisputeID: record.ProviderDisputeID,
+		ProviderStatus:    record.ProviderStatus,
+		OutcomeCode:       record.OutcomeCode,
+		Money: paymentrecovery.Money{
+			AmountCents: record.AmountCents, Currency: record.Currency,
+		},
+		ReasonCode: record.ReasonCode, Revision: record.Revision,
+	}
+	if record.OpenedAt != nil {
+		dispute.OpenedAt = *record.OpenedAt
+	}
+	if record.DueAt != nil {
+		dispute.DueAt = *record.DueAt
+	}
+	if record.LastObservedAt != nil {
+		dispute.LastObservedAt = *record.LastObservedAt
+	}
+	return dispute
+}
+
+func timePointer(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	utc := value.UTC()
+	return &utc
 }
 
 func (s *Service) publishOrderRefunded(
@@ -2019,6 +2317,29 @@ func (s *Service) resolveAssetDelivery(ctx context.Context, delivery *DeliveryRe
 	})
 	if err != nil {
 		return DeliveryDownloadResult{}, err
+	}
+	if strings.TrimSpace(assetOut.GrantID) == "" {
+		return DeliveryDownloadResult{}, fmt.Errorf("asset delivery returned an empty grant id")
+	}
+	if s.db != nil {
+		stored, err := s.db.RecordAssetDeliveryGrant(ctx, deliveryrecovery.Grant{
+			DeliveryGrantID: delivery.Grant.ID,
+			AssetID:         deliveryRef, ProviderGrantID: assetOut.GrantID,
+			ExpiresAt: assetOut.ExpiresAt,
+		})
+		if err != nil {
+			if revoker, ok := s.assetDelivery.(AssetDeliveryRevoker); ok {
+				_ = revoker.RevokeDelivery(ctx, assetOut.GrantID)
+			}
+			return DeliveryDownloadResult{}, err
+		}
+		if stored.State == deliveryrecovery.StateRevokePending {
+			if revoker, ok := s.assetDelivery.(AssetDeliveryRevoker); ok {
+				if revokeErr := revoker.RevokeDelivery(ctx, stored.ProviderGrantID); revokeErr == nil {
+					_ = s.db.MarkAssetGrantRevoked(ctx, stored.ID)
+				}
+			}
+		}
 	}
 	res.URL = assetOut.URL
 	if !assetOut.ExpiresAt.IsZero() && assetOut.ExpiresAt.Before(res.ExpiresAt) {

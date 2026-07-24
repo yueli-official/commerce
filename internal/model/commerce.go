@@ -50,10 +50,11 @@ const (
 )
 
 const (
-	DeliveryStatePending = "pending"
-	DeliveryStateGranted = "granted"
-	DeliveryStateRevoked = "revoked"
-	DeliveryStateFailed  = "failed"
+	DeliveryStatePending   = "pending"
+	DeliveryStateGranted   = "granted"
+	DeliveryStateSuspended = "suspended"
+	DeliveryStateRevoked   = "revoked"
+	DeliveryStateFailed    = "failed"
 )
 
 // Product is a purchasable item tied to a site. A `paid` product is priced in

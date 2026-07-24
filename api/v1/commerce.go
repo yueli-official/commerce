@@ -358,6 +358,81 @@ type AdminOrderRefundRes struct {
 	OrderStatus string `json:"orderStatus"`
 }
 
+type AdminAssetGrantRecoveryView struct {
+	ID              string `json:"id"`
+	OrderID         string `json:"orderId"`
+	DeliveryGrantID string `json:"deliveryGrantId"`
+	AssetID         string `json:"assetId"`
+	ProviderGrantID string `json:"providerGrantId"`
+	State           string `json:"state"`
+	ExpiresAt       string `json:"expiresAt"`
+	NextRevokeAt    string `json:"nextRevokeAt,omitempty"`
+	RevokeAttempts  int    `json:"revokeAttempts"`
+	LastError       string `json:"lastError,omitempty"`
+	CreatedAt       string `json:"createdAt"`
+	UpdatedAt       string `json:"updatedAt"`
+	RevokedAt       string `json:"revokedAt,omitempty"`
+}
+
+type AdminListAssetGrantRecoveriesReq struct {
+	g.Meta `path:"/api/v1/admin/commerce/recovery/asset-grants" method:"GET" tags:"Admin Commerce Recovery" summary:"List remote Asset delivery grant recovery state"`
+	State  string `p:"state"`
+	Limit  int    `p:"limit"`
+	Offset int    `p:"offset"`
+}
+
+type AdminListAssetGrantRecoveriesRes struct {
+	Grants []AdminAssetGrantRecoveryView `json:"grants"`
+	Total  int                           `json:"total"`
+}
+
+type AdminRetryAssetGrantRecoveryReq struct {
+	g.Meta `path:"/api/v1/admin/commerce/recovery/asset-grants/{id}/retry" method:"POST" tags:"Admin Commerce Recovery" summary:"Retry remote Asset delivery grant revocation"`
+	ID     string `p:"id" v:"required"`
+}
+
+type AdminRetryAssetGrantRecoveryRes struct {
+	Queued bool `json:"queued"`
+}
+
+type AdminRecoveryCaseView struct {
+	Kind         string `json:"kind"`
+	ID           string `json:"id"`
+	OrderID      string `json:"orderId"`
+	OrderNo      string `json:"orderNo"`
+	Provider     string `json:"provider"`
+	State        string `json:"state"`
+	Attempts     int    `json:"attempts"`
+	LastError    string `json:"lastError,omitempty"`
+	NextActionAt string `json:"nextActionAt,omitempty"`
+	CreatedAt    string `json:"createdAt"`
+	UpdatedAt    string `json:"updatedAt"`
+	Retryable    bool   `json:"retryable"`
+}
+
+type AdminListRecoveryCasesReq struct {
+	g.Meta `path:"/api/v1/admin/commerce/recovery/cases" method:"GET" tags:"Admin Commerce Recovery" summary:"List actionable Commerce recovery cases"`
+	Kind   string `p:"kind"`
+	State  string `p:"state"`
+	Limit  int    `p:"limit"`
+	Offset int    `p:"offset"`
+}
+
+type AdminListRecoveryCasesRes struct {
+	Cases []AdminRecoveryCaseView `json:"cases"`
+	Total int                     `json:"total"`
+}
+
+type AdminRetryRecoveryCaseReq struct {
+	g.Meta `path:"/api/v1/admin/commerce/recovery/cases/{kind}/{id}/retry" method:"POST" tags:"Admin Commerce Recovery" summary:"Retry a Commerce recovery case"`
+	Kind   string `p:"kind" v:"required"`
+	ID     string `p:"id" v:"required"`
+}
+
+type AdminRetryRecoveryCaseRes struct {
+	Queued bool `json:"queued"`
+}
+
 // ─── GET /api/v1/access ─────────────────────────────────────────────────────
 
 // EntitledReq is the query-param request for Entitled.

@@ -511,7 +511,7 @@ func TestPurchasesListsLoggedInDeliveryGrants(t *testing.T) {
 }
 
 func TestResolvePurchaseDownloadSelectsAssetFromBundle(t *testing.T) {
-	svc, _, ctx := newSvc(t)
+	svc, store, ctx := newSvc(t)
 	assetDelivery := &captureAssetDelivery{url: "https://asset.example/grants/bundle-token"}
 	svc.ConfigureAssetDeliveryClient(assetDelivery)
 	sub := uid("bundle-buyer")
@@ -548,6 +548,33 @@ func TestResolvePurchaseDownloadSelectsAssetFromBundle(t *testing.T) {
 	}
 	if assetDelivery.assetID != "asset-b" {
 		t.Fatalf("asset delivery asset = %q, want asset-b", assetDelivery.assetID)
+	}
+	remote, total, err := store.ListAssetGrantRevocations(ctx, "active", 10, 0)
+	if err != nil {
+		t.Fatalf("ListAssetGrantRevocations active: %v", err)
+	}
+	if total != 1 || len(remote) != 1 || remote[0].ProviderGrantID != "asset-grant-capture" {
+		t.Fatalf("active remote grants = %+v total=%d", remote, total)
+	}
+	if _, err := svc.RevokeDelivery(ctx, order.OrderNo); err != nil {
+		t.Fatalf("RevokeDelivery: %v", err)
+	}
+	remote, total, err = store.ListAssetGrantRevocations(ctx, "revoke_pending", 10, 0)
+	if err != nil {
+		t.Fatalf("ListAssetGrantRevocations pending: %v", err)
+	}
+	if total != 1 || len(remote) != 1 {
+		t.Fatalf("pending remote grants = %+v total=%d", remote, total)
+	}
+	cases, caseTotal, err := svc.ListRecoveryCases(ctx, "asset_grant", "revoke_pending", 10, 0)
+	if err != nil {
+		t.Fatalf("ListRecoveryCases: %v", err)
+	}
+	if caseTotal != 1 || len(cases) != 1 || cases[0].OrderNo != order.OrderNo {
+		t.Fatalf("recovery cases = %+v total=%d", cases, caseTotal)
+	}
+	if queued, err := svc.RetryRecoveryCase(ctx, cases[0].Kind, cases[0].ID); err != nil || !queued {
+		t.Fatalf("RetryRecoveryCase queued=%v err=%v", queued, err)
 	}
 	if _, err := svc.ResolvePurchaseDownload(ctx, sub, order.OrderNo, "asset-missing"); err == nil {
 		t.Fatal("expected missing bundle asset to fail")
@@ -698,6 +725,11 @@ func TestAdminOrderSupportActions(t *testing.T) {
 
 func TestRecordPaymentFailureAppearsInOrderDetail(t *testing.T) {
 	svc, _, ctx := newSvc(t)
+	if _, err := svc.SavePaymentMethods(ctx, []service.PaymentMethodInput{{
+		Provider: "paypal", Enabled: true,
+	}}); err != nil {
+		t.Fatalf("enable paypal: %v", err)
+	}
 	order, err := svc.CreateCheckout(ctx, service.CheckoutDesc{
 		BuyerEmail: "audit@example.com",
 		Provider:   "paypal",
@@ -849,7 +881,10 @@ type captureAssetDelivery struct {
 func (c *captureAssetDelivery) CreateDelivery(ctx context.Context, in service.AssetDeliveryInput) (service.AssetDeliveryOutput, error) {
 	c.assetID = in.AssetID
 	c.subjectID = in.SubjectID
-	return service.AssetDeliveryOutput{URL: c.url, ExpiresAt: time.Now().UTC().Add(time.Minute)}, nil
+	return service.AssetDeliveryOutput{
+		GrantID: "asset-grant-capture", URL: c.url,
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
+	}, nil
 }
 
 type flakyAssetDelivery struct {
@@ -862,7 +897,10 @@ func (c *flakyAssetDelivery) CreateDelivery(ctx context.Context, in service.Asse
 	if c.attempts == 1 {
 		return service.AssetDeliveryOutput{}, errAssetSigningUnavailable
 	}
-	return service.AssetDeliveryOutput{URL: c.url, ExpiresAt: time.Now().UTC().Add(time.Minute)}, nil
+	return service.AssetDeliveryOutput{
+		GrantID: "asset-grant-flaky", URL: c.url,
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
+	}, nil
 }
 
 type staticCheckoutItemResolver struct {

@@ -111,5 +111,8 @@ type captureAssetDeliveryForUnit struct {
 func (c *captureAssetDeliveryForUnit) CreateDelivery(ctx context.Context, in AssetDeliveryInput) (AssetDeliveryOutput, error) {
 	c.assetID = in.AssetID
 	c.subjectID = in.SubjectID
-	return AssetDeliveryOutput{URL: c.url, ExpiresAt: time.Now().UTC().Add(time.Minute)}, nil
+	return AssetDeliveryOutput{
+		GrantID: "asset-grant-unit", URL: c.url,
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
+	}, nil
 }

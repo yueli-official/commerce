@@ -52,6 +52,42 @@ func TestPaymentRecoveryMigrationLifecycle(t *testing.T) {
 	}
 	assertRecoveryShape(t, database, true)
 	assertReconciliationShape(t, database, true)
+	assertRefundReconciliationShape(t, database, true)
+	assertDisputeProjectionShape(t, database, true)
+	assertAssetGrantRecoveryShape(t, database, true)
+	assertAuditShape(t, database, true)
+
+	applyMigration(t, database, "0014_audit_v1.down.sql", "down 0014")
+	assertAuditShape(t, database, false)
+	applyMigration(t, database, "0014_audit_v1.up.sql", "reapply 0014")
+	assertAuditShape(t, database, true)
+
+	applyMigration(
+		t, database, "0013_asset_grant_recovery.down.sql", "down 0013",
+	)
+	assertAssetGrantRecoveryShape(t, database, false)
+	applyMigration(
+		t, database, "0013_asset_grant_recovery.up.sql", "reapply 0013",
+	)
+	assertAssetGrantRecoveryShape(t, database, true)
+
+	applyMigration(
+		t, database, "0012_dispute_projection.down.sql", "down 0012",
+	)
+	assertDisputeProjectionShape(t, database, false)
+	applyMigration(
+		t, database, "0012_dispute_projection.up.sql", "reapply 0012",
+	)
+	assertDisputeProjectionShape(t, database, true)
+
+	applyMigration(
+		t, database, "0011_refund_reconciliation.down.sql", "down 0011",
+	)
+	assertRefundReconciliationShape(t, database, false)
+	applyMigration(
+		t, database, "0011_refund_reconciliation.up.sql", "reapply 0011",
+	)
+	assertRefundReconciliationShape(t, database, true)
 
 	applyMigration(
 		t, database, "0010_payment_reconciliation.down.sql", "down 0010",
@@ -62,11 +98,26 @@ func TestPaymentRecoveryMigrationLifecycle(t *testing.T) {
 	)
 	assertReconciliationShape(t, database, true)
 
+	applyMigration(
+		t, database, "0012_dispute_projection.down.sql", "down 0012 before 0009",
+	)
 	applyMigration(t, database, "0009_payment_recovery.down.sql", "down 0009")
 	assertRecoveryShape(t, database, false)
 
 	applyMigration(t, database, "0009_payment_recovery.up.sql", "reapply 0009")
+	applyMigration(
+		t, database, "0010_payment_reconciliation.up.sql", "reapply 0010 after 0009",
+	)
+	applyMigration(
+		t, database, "0011_refund_reconciliation.up.sql", "reapply 0011 after 0009",
+	)
+	applyMigration(
+		t, database, "0012_dispute_projection.up.sql", "reapply 0012 after 0009",
+	)
 	assertRecoveryShape(t, database, true)
+	assertReconciliationShape(t, database, true)
+	assertRefundReconciliationShape(t, database, true)
+	assertDisputeProjectionShape(t, database, true)
 }
 
 func applyMigration(t *testing.T, database *sql.DB, name, action string) {
@@ -128,6 +179,91 @@ SELECT EXISTS (
 		}
 		if exists != want {
 			t.Fatalf("payment_attempts.%s exists=%v, want %v", column, exists, want)
+		}
+	}
+}
+
+func assertRefundReconciliationShape(t *testing.T, database *sql.DB, want bool) {
+	t.Helper()
+	for _, column := range []string{
+		"last_reconciled_at", "next_reconcile_at",
+		"reconciliation_failures", "reconciliation_error",
+	} {
+		var exists bool
+		if err := database.QueryRow(`
+SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'refunds'
+      AND column_name = $1
+)`, column).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if exists != want {
+			t.Fatalf("refunds.%s exists=%v, want %v", column, exists, want)
+		}
+	}
+}
+
+func assertDisputeProjectionShape(t *testing.T, database *sql.DB, want bool) {
+	t.Helper()
+	for table, columns := range map[string][]string{
+		"disputes": {
+			"provider_tx_id", "provider_status", "outcome_code",
+			"last_observed_at",
+		},
+		"entitlements":    {"suspended_at", "suspended_reason"},
+		"delivery_grants": {"suspended_at", "suspended_reason"},
+	} {
+		for _, column := range columns {
+			var exists bool
+			if err := database.QueryRow(`
+SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = $1
+      AND column_name = $2
+)`, table, column).Scan(&exists); err != nil {
+				t.Fatal(err)
+			}
+			if exists != want {
+				t.Fatalf("%s.%s exists=%v, want %v", table, column, exists, want)
+			}
+		}
+	}
+}
+
+func assertAssetGrantRecoveryShape(t *testing.T, database *sql.DB, want bool) {
+	t.Helper()
+	var exists bool
+	if err := database.QueryRow(`
+SELECT EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = current_schema()
+      AND table_name = 'asset_delivery_grants'
+)`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists != want {
+		t.Fatalf("asset_delivery_grants exists=%v, want %v", exists, want)
+	}
+}
+
+func assertAuditShape(t *testing.T, database *sql.DB, want bool) {
+	t.Helper()
+	for _, table := range []string{
+		"audit_instances", "audit_events", "audit_event_receipts", "audit_mirror_outbox",
+	} {
+		var exists bool
+		if err := database.QueryRow(`
+SELECT EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = current_schema() AND table_name = $1
+)`, table).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if exists != want {
+			t.Fatalf("%s exists=%v, want %v", table, exists, want)
 		}
 	}
 }

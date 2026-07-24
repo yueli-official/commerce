@@ -19,6 +19,8 @@ database:
     name: "commerce"
 
 commerce:
+  # Stable per deployment; scopes Foundation Audit and Work ownership.
+  instanceKey: "default"
   capabilityScope: "platform:capabilities:read"
   capabilityProbeScope: "platform:capabilities:probe"
   # Reject checkout/access calls that do not resolve to a registered OAuth
@@ -81,6 +83,12 @@ commerce:
     client_secret: ""
     scope: "notification:send"
 
+  recovery:
+    notification:
+      # Optional operations mailbox. A notice is sent after the third failed
+      # remote Asset grant revocation attempt; retries continue durably.
+      recipientEmail: ""
+
   webhook:
     # Enables durable outbound Commerce facts. Apply 0007/0008 migrations first.
     enabled: false
@@ -107,6 +115,8 @@ commerce:
     sandbox: true
     # Optional override for tests/proxies. Empty uses PayPal sandbox/live API base.
     base_url: ""
+    # PayPal REST app webhook id used by the signature verification endpoint.
+    webhook_id: ""
 
   wechat:
     merchant_id: ""

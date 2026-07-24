@@ -38,7 +38,7 @@ func TestClientCreateDeliveryMintsAssetGrant(t *testing.T) {
 			if body["assetId"] != "asset-123" || body["subjectId"] != "buyer@example.com" {
 				t.Fatalf("unexpected grant body: %+v", body)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]string{"url": "https://asset.example/grants/TOKEN", "expiresAt": expires})
+			_ = json.NewEncoder(w).Encode(map[string]string{"grantId": "grant-123", "url": "https://asset.example/grants/TOKEN", "expiresAt": expires})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -63,7 +63,41 @@ func TestClientCreateDeliveryMintsAssetGrant(t *testing.T) {
 	if out.URL != "https://asset.example/grants/TOKEN" {
 		t.Fatalf("url = %q", out.URL)
 	}
+	if out.GrantID != "grant-123" {
+		t.Fatalf("grant id = %q", out.GrantID)
+	}
 	if out.ExpiresAt.IsZero() {
 		t.Fatal("expected parsed expiry")
+	}
+}
+
+func TestClientRevokeDeliveryTreatsAlreadyRevokedAsConverged(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/oauth2/token":
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "ASSET-TOKEN"})
+		case "/api/v1/admin/assets/grants/grant-123/revoke":
+			if r.Method != http.MethodPost {
+				t.Fatalf("method = %s", r.Method)
+			}
+			if got := r.Header.Get("Authorization"); got != "Bearer ASSET-TOKEN" {
+				t.Fatalf("authorization = %q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]bool{"revoked": false})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	client, err := assetclient.New(assetclient.Config{
+		BaseURL: srv.URL, TokenURL: srv.URL + "/oauth2/token",
+		ClientID: "commerce", ClientSecret: "secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.RevokeDelivery(context.Background(), "grant-123"); err != nil {
+		t.Fatalf("RevokeDelivery: %v", err)
 	}
 }

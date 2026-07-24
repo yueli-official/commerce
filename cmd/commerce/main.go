@@ -3,8 +3,10 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"time"
@@ -26,8 +28,10 @@ import (
 	paypal "platform/paykit/providers/paypal"
 	wechat "platform/paykit/providers/wechat"
 	"platform/services/commerce/internal/appconfig"
+	"platform/services/commerce/internal/commerceaudit"
 	"platform/services/commerce/internal/commercewebhook"
 	"platform/services/commerce/internal/dao"
+	"platform/services/commerce/internal/deliveryrecovery"
 	"platform/services/commerce/internal/paymentreconcile"
 	"platform/services/commerce/internal/server"
 	commerceservice "platform/services/commerce/internal/service"
@@ -149,18 +153,33 @@ func main() {
 	deps.Service = svc
 
 	var paymentWorker *work.Runner
-	if !exportingOpenAPI && g.Cfg().MustGet(ctx, "commerce.worker.enabled", true).Bool() {
-		workDB, err := postgresdb.OpenDefault(ctx)
+	var foundationDB *sql.DB
+	if !exportingOpenAPI {
+		foundationDB, err = postgresdb.OpenDefault(ctx)
 		if err != nil {
 			panic(err)
 		}
-		defer workDB.Close()
-		catalog, err := work.Compile(paymentreconcile.WorkDefinition())
+		defer foundationDB.Close()
+		auditJournal, auditErr := commerceaudit.New(
+			ctx, foundationDB,
+			g.Cfg().MustGet(ctx, "commerce.instanceKey", "default").String(),
+		)
+		if auditErr != nil {
+			panic(auditErr)
+		}
+		db.UseAudit(auditJournal)
+	}
+	if !exportingOpenAPI && g.Cfg().MustGet(ctx, "commerce.worker.enabled", true).Bool() {
+		definition := deliveryrecovery.ExtendWorkDefinition(
+			paymentreconcile.WorkDefinition(),
+			paymentreconcile.WorkQueueReconciliation,
+		)
+		catalog, err := work.Compile(definition)
 		if err != nil {
 			panic(err)
 		}
 		adapter, err := workpostgres.New(ctx, catalog, workpostgres.Options{
-			DB: workDB, InstanceKey: "commerce:payment-reconciliation:v1",
+			DB: foundationDB, InstanceKey: "commerce:payment-reconciliation:v1",
 		})
 		if err != nil {
 			panic(err)
@@ -173,12 +192,20 @@ func main() {
 				workerID = "commerce-worker"
 			}
 		}
+		handlers := paymentreconcile.WorkHandlers(
+			db, adapter, paymentreconcile.New(svc, reg), time.Now,
+		)
+		var assetRevoker deliveryrecovery.Revoker
+		if configured, ok := deps.Asset.(deliveryrecovery.Revoker); ok {
+			assetRevoker = configured
+		}
+		maps.Copy(handlers, deliveryrecovery.WorkHandlers(
+			db, adapter, assetRevoker, appconfig.BuildRecoveryNotifier(ctx), time.Now,
+		))
 		paymentWorker, err = work.NewRunner(
 			catalog,
 			adapter,
-			paymentreconcile.WorkHandlers(
-				db, adapter, paymentreconcile.New(svc, reg), time.Now,
-			),
+			handlers,
 			work.RunnerOptions{
 				WorkerID: workerID,
 				PollInterval: g.Cfg().MustGet(
@@ -238,6 +265,7 @@ func buildGatewayRegistry(alipayCfg appconfig.Alipay, paypalCfg appconfig.PayPal
 			ClientSecret: paypalCfg.ClientSecret,
 			Sandbox:      paypalCfg.Sandbox,
 			BaseURL:      paypalCfg.BaseURL,
+			WebhookID:    paypalCfg.WebhookID,
 			HTTPClient:   providerHTTPClient,
 		})
 		if err != nil {

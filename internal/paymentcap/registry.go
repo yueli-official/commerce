@@ -157,10 +157,18 @@ func (registry *Registry) rebuildLocked(generatedAt time.Time) (*capability.Snap
 		Capabilities: []capability.Capability{{
 			Key: "commerce.payment", ContractVersion: "1.0", Support: capability.SupportSupported,
 			Configuration: configuration, Enablement: enablement, Health: health, Operations: uniqueSorted(operations),
-			Links: []capability.Link{{Rel: "payment-methods", Href: "/api/v1/admin/commerce/payment-methods"}},
+			Links: []capability.Link{
+				{Rel: "payment-methods", Href: "/api/v1/admin/commerce/payment-methods"},
+				{Rel: "recovery", Href: "/api/v1/admin/commerce/recovery/cases"},
+			},
 		}},
 		Providers: providers,
-		Links:     []capability.Link{{Rel: "health", Href: "/healthz"}, {Rel: "payment-methods", Href: "/api/v1/admin/commerce/payment-methods"}, {Rel: "ready", Href: "/readyz"}},
+		Links: []capability.Link{
+			{Rel: "health", Href: "/healthz"},
+			{Rel: "payment-methods", Href: "/api/v1/admin/commerce/payment-methods"},
+			{Rel: "recovery", Href: "/api/v1/admin/commerce/recovery/cases"},
+			{Rel: "ready", Href: "/readyz"},
+		},
 	})
 	if err != nil {
 		return nil, err

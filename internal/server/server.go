@@ -105,6 +105,15 @@ func Configure(s *ghttp.Server, d Deps) {
 				grp.POST("/api/v1/payments/wechat/notify", notifyCtrl.Handle)
 			})
 		}
+		if gw, ok := d.Registry["paypal"]; ok {
+			if verifier, supported := gw.(paykit.VerifyDisputeProvider); supported {
+				disputeCtrl := controller.NewDisputeWebhook("paypal", verifier, svc)
+				s.Group("/", func(grp *ghttp.RouterGroup) {
+					grp.Middleware(apiMiddleware)
+					grp.POST("/api/v1/payments/paypal/webhook", disputeCtrl.Handle)
+				})
+			}
+		}
 	}
 
 	// ── Public/optional-auth: virtual-goods checkout ─────────────────────────
