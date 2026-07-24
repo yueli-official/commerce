@@ -10,6 +10,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -45,7 +47,8 @@ func newDB(t *testing.T) gdb.DB {
 	pass := os.Getenv("COMMERCE_PG_PASS")
 
 	// GoFrame link format for pgsql: pgsql:user:pass@tcp(host:port)/dbname
-	link := fmt.Sprintf("pgsql:%s:%s@tcp(%s:%s)/commerce", user, pass, host, port)
+	dbName := envOr("COMMERCE_PG_DB", "commerce")
+	link := fmt.Sprintf("pgsql:%s:%s@tcp(%s:%s)/%s", user, pass, host, port, dbName)
 	db, err := gdb.New(gdb.ConfigNode{Link: link})
 	if err != nil {
 		t.Fatalf("gdb.New: %v", err)
@@ -59,6 +62,25 @@ func resetSchema(t *testing.T, db gdb.DB) {
 	t.Helper()
 	ctx := context.Background()
 	for _, stmt := range []string{
+		"DROP TABLE IF EXISTS webhook_replay_receipts CASCADE",
+		"DROP TABLE IF EXISTS webhook_inbound_receipts CASCADE",
+		"DROP TABLE IF EXISTS webhook_attempts CASCADE",
+		"DROP TABLE IF EXISTS webhook_deliveries CASCADE",
+		"DROP TABLE IF EXISTS webhook_events CASCADE",
+		"DROP TABLE IF EXISTS webhook_subscription_revisions CASCADE",
+		"DROP TABLE IF EXISTS webhook_subscriptions CASCADE",
+		"DROP TABLE IF EXISTS webhook_endpoint_revisions CASCADE",
+		"DROP TABLE IF EXISTS webhook_endpoints CASCADE",
+		"DROP TABLE IF EXISTS webhook_secret_material CASCADE",
+		"DROP TABLE IF EXISTS webhook_instances CASCADE",
+		"DROP TABLE IF EXISTS work_schedules CASCADE",
+		"DROP TABLE IF EXISTS work_attempts CASCADE",
+		"DROP TABLE IF EXISTS work_jobs CASCADE",
+		"DROP TABLE IF EXISTS work_instances CASCADE",
+		"DROP TABLE IF EXISTS provider_events CASCADE",
+		"DROP TABLE IF EXISTS disputes CASCADE",
+		"DROP TABLE IF EXISTS refunds CASCADE",
+		"DROP TABLE IF EXISTS payment_attempts CASCADE",
 		"DROP TABLE IF EXISTS delivery_grants",
 		"DROP TABLE IF EXISTS payment_events",
 		"DROP TABLE IF EXISTS order_items",
@@ -75,12 +97,12 @@ func resetSchema(t *testing.T, db gdb.DB) {
 			t.Fatalf("drop table: %v", err)
 		}
 	}
-	for _, f := range []string{
-		"../../manifest/sql/migrations/0001_init.up.sql",
-		"../../manifest/sql/migrations/0002_credits_checkin.up.sql",
-		"../../manifest/sql/migrations/0003_virtual_shop_checkout.up.sql",
-		"../../manifest/sql/migrations/0004_payment_methods.up.sql",
-	} {
+	migrations, err := filepath.Glob("../../manifest/sql/migrations/*.up.sql")
+	if err != nil {
+		t.Fatalf("list migrations: %v", err)
+	}
+	sort.Strings(migrations)
+	for _, f := range migrations {
 		up, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatalf("read migration %s: %v", f, err)

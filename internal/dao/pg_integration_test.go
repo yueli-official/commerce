@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 func dsn(host, port, user, pass, db string) string {
@@ -56,18 +56,20 @@ func TestPGSchema(t *testing.T) {
 	user := envOr("COMMERCE_PG_USER", "postgres")
 	pass := os.Getenv("COMMERCE_PG_PASS")
 
-	// 1. Ensure the `commerce` database exists (idempotent).
+	dbName := envOr("COMMERCE_PG_DB", "commerce")
+
+	// 1. Ensure the isolated commerce database exists (idempotent).
 	admin, err := sql.Open("postgres", dsn(host, port, user, pass, "postgres"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := admin.Exec("CREATE DATABASE commerce"); err != nil && !strings.Contains(err.Error(), "already exists") {
-		t.Fatalf("create database commerce: %v", err)
+	if _, err := admin.Exec("CREATE DATABASE " + pq.QuoteIdentifier(dbName)); err != nil && !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("create database %s: %v", dbName, err)
 	}
 	admin.Close()
 
 	// 2. Apply 0001_init.up.sql to the commerce db (clean slate first).
-	db, err := sql.Open("postgres", dsn(host, port, user, pass, "commerce"))
+	db, err := sql.Open("postgres", dsn(host, port, user, pass, dbName))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,10 +78,22 @@ func TestPGSchema(t *testing.T) {
 		t.Fatalf("ping commerce db: %v", err)
 	}
 
-	// Drop in FK-safe order.
-	mustExec(t, db, "DROP TABLE IF EXISTS entitlements")
-	mustExec(t, db, "DROP TABLE IF EXISTS orders")
-	mustExec(t, db, "DROP TABLE IF EXISTS products")
+	// Drop any newer Commerce schema in FK-safe order before exercising the
+	// original DAO contract against 0001.
+	for _, table := range []string{
+		"webhook_replay_receipts", "webhook_inbound_receipts",
+		"webhook_attempts", "webhook_deliveries", "webhook_events",
+		"webhook_subscription_revisions", "webhook_subscriptions",
+		"webhook_endpoint_revisions", "webhook_endpoints",
+		"webhook_secret_material", "webhook_instances",
+		"work_schedules", "work_attempts", "work_jobs", "work_instances",
+		"provider_events", "disputes", "refunds", "payment_attempts",
+		"delivery_grants", "payment_events", "order_items", "checkin_records",
+		"credits_ledger", "credits_balances", "commerce_buyers",
+		"commerce_payment_methods", "entitlements", "orders", "products",
+	} {
+		mustExec(t, db, "DROP TABLE IF EXISTS "+table+" CASCADE")
+	}
 
 	up, err := os.ReadFile("../../manifest/sql/migrations/0001_init.up.sql")
 	if err != nil {

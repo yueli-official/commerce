@@ -145,10 +145,14 @@ func (f *fakeGateway) VerifyNotify(_ context.Context, body []byte, _ map[string]
 		// Extract order number from "order=<orderNo>"
 		orderNo := string(body[len("order="):])
 		return &paykit.NotifyOut{
-			Success:      true,
-			OrderNo:      orderNo,
-			ProviderTxID: "FAKE-TX-" + orderNo,
-			AmountCents:  9900, // must match what CreateOrder stores
+			Success:        true,
+			OrderNo:        orderNo,
+			ProviderTxID:   "FAKE-TX-" + orderNo,
+			AmountCents:    9900, // must match what CreateOrder stores
+			Currency:       "CNY",
+			EventID:        "FAKE-EVENT-" + orderNo,
+			Status:         paykit.PaymentStatusSettled,
+			ProviderStatus: "COMPLETED",
 		}, nil
 	}
 	return &paykit.NotifyOut{Success: false}, nil
@@ -284,6 +288,17 @@ func pgSetup(t *gtest.T) *dao.PG {
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		host, port, user, pass, dbName))
 	t.AssertNil(err)
+	for _, table := range []string{
+		"webhook_replay_receipts", "webhook_inbound_receipts",
+		"webhook_attempts", "webhook_deliveries", "webhook_events",
+		"webhook_subscription_revisions", "webhook_subscriptions",
+		"webhook_endpoint_revisions", "webhook_endpoints",
+		"webhook_secret_material", "webhook_instances",
+		"work_schedules", "work_attempts", "work_jobs", "work_instances",
+		"provider_events", "disputes", "refunds", "payment_attempts",
+	} {
+		_, _ = cdb.Exec("DROP TABLE IF EXISTS " + table + " CASCADE")
+	}
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS checkin_records CASCADE")
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS credits_ledger CASCADE")
 	_, _ = cdb.Exec("DROP TABLE IF EXISTS credits_balances CASCADE")

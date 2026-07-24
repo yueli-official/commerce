@@ -27,6 +27,7 @@ import (
 	"platform/services/commerce/internal/commercewebhook"
 	"platform/services/commerce/internal/dao"
 	"platform/services/commerce/internal/model"
+	"platform/services/commerce/internal/paymentrecovery"
 )
 
 // OrderDesc carries the caller-supplied descriptor for a new order. SiteKey +
@@ -96,6 +97,11 @@ type CheckoutGrantResult struct {
 	Token       string
 	State       string
 	DeliveryRef string
+}
+
+type PaymentAcceptanceResult struct {
+	Processing paymentrecovery.ProcessingState
+	Grant      *CheckoutGrantResult
 }
 
 type DeliveryResult struct {
@@ -872,6 +878,187 @@ func (s *Service) SettleCheckout(ctx context.Context, orderNo, provider, provide
 	}
 	s.sendDeliveryMail(ctx, o, first, rawToken)
 	return &CheckoutGrantResult{Token: rawToken, State: model.DeliveryStateGranted, DeliveryRef: first.DeliveryRefSnapshot}, nil
+}
+
+// AcceptPaymentObservation atomically persists verified provider evidence,
+// advances the payment attempt and projects a settlement into the order,
+// entitlement, delivery grant and outbound webhook. Provider callbacks and
+// active reconciliation queries share this entry point.
+func (s *Service) AcceptPaymentObservation(
+	ctx context.Context,
+	observation paymentrecovery.PaymentObservation,
+	providerEventID, providerStatus string,
+) (*PaymentAcceptanceResult, error) {
+	event, err := paymentrecovery.NewPaymentEvent(observation, providerEventID, providerStatus)
+	if err != nil {
+		return nil, err
+	}
+	rawToken, tokenHash, err := newDeliveryToken()
+	if err != nil {
+		return nil, err
+	}
+	result := &PaymentAcceptanceResult{Processing: paymentrecovery.ProcessingReceived}
+	var fulfilledOrder *model.Order
+	var fulfilledItem *model.OrderItem
+
+	err = s.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		persisted, inserted, err := s.db.ReserveProviderEventTx(ctx, tx, &event)
+		if err != nil {
+			return err
+		}
+		if persisted == nil {
+			return fmt.Errorf("payment recovery event reservation returned no row")
+		}
+		if !inserted {
+			if !event.SameEvidence(*persisted) {
+				return paymentrecovery.ErrEventConflict
+			}
+			switch persisted.Processing {
+			case paymentrecovery.ProcessingApplied,
+				paymentrecovery.ProcessingIgnored,
+				paymentrecovery.ProcessingConflict:
+				result.Processing = persisted.Processing
+				return nil
+			}
+			event.ID = persisted.ID
+		}
+
+		order, err := s.db.GetOrderByNoTxForUpdate(ctx, tx, observation.OrderNo)
+		if err != nil {
+			return err
+		}
+		if order == nil {
+			result.Processing = paymentrecovery.ProcessingConflict
+			return s.db.FinalizeProviderEventTx(
+				ctx, tx, event.ID, "", "", result.Processing, "order not found",
+			)
+		}
+		event.OrderID = order.ID
+		if order.PaymentProvider != "" && order.PaymentProvider != observation.Provider {
+			result.Processing = paymentrecovery.ProcessingConflict
+			return s.db.FinalizeProviderEventTx(
+				ctx, tx, event.ID, order.ID, "", result.Processing, "payment provider mismatch",
+			)
+		}
+
+		attempt, err := s.db.EnsurePaymentAttemptTx(
+			ctx, tx, order, observation.Provider, observation.Merchant,
+		)
+		if err != nil {
+			return err
+		}
+		if attempt == nil {
+			return fmt.Errorf("payment recovery attempt reservation returned no row")
+		}
+		event.PaymentAttemptID = attempt.ID
+		current := paymentrecovery.Payment{
+			Status: attempt.Status, Provider: attempt.Provider, Merchant: attempt.Merchant,
+			OrderNo: order.OrderNo, ProviderTxID: attempt.ProviderTxID,
+			Money: paymentrecovery.Money{
+				AmountCents: attempt.AmountCents,
+				Currency:    attempt.Currency,
+			},
+			Revision: attempt.Revision,
+		}
+		if attempt.LastObservedAt != nil {
+			current.LastObservedAt = *attempt.LastObservedAt
+		}
+		next, changed, applyErr := paymentrecovery.ApplyPayment(current, observation)
+		if applyErr != nil {
+			result.Processing = paymentrecovery.ProcessingConflict
+			return s.db.FinalizeProviderEventTx(
+				ctx, tx, event.ID, order.ID, attempt.ID, result.Processing, applyErr.Error(),
+			)
+		}
+		if !changed {
+			result.Processing = paymentrecovery.ProcessingIgnored
+			return s.db.FinalizeProviderEventTx(
+				ctx, tx, event.ID, order.ID, attempt.ID, result.Processing, "",
+			)
+		}
+
+		if observation.Status == paymentrecovery.PaymentSettled {
+			switch order.Status {
+			case model.OrderStatusPending, model.OrderStatusPaying, model.OrderStatusCancelled:
+			case model.OrderStatusFulfilled:
+				// A previous settlement projection already completed.
+			default:
+				result.Processing = paymentrecovery.ProcessingConflict
+				return s.db.FinalizeProviderEventTx(
+					ctx, tx, event.ID, order.ID, attempt.ID, result.Processing,
+					"order cannot accept a payment settlement",
+				)
+			}
+		}
+		if err := s.db.UpdatePaymentAttemptTx(ctx, tx, attempt.ID, next); err != nil {
+			return err
+		}
+		if err := s.db.UpdateOrderPaymentStateTx(ctx, tx, order.ID, next.Status); err != nil {
+			return err
+		}
+
+		if observation.Status == paymentrecovery.PaymentSettled {
+			items, err := s.db.OrderItemsTx(ctx, tx, order.ID)
+			if err != nil {
+				return err
+			}
+			if len(items) == 0 {
+				return commerceerr.NotifyInvalid("checkout has no items")
+			}
+			now := gtime.New(observation.OccurredAt)
+			fulfilled, err := s.db.FulfillRecoveredCheckoutTx(
+				ctx, tx, order.ID, observation.ProviderTxID, now,
+			)
+			if err != nil {
+				return err
+			}
+			if fulfilled {
+				first := items[0]
+				grantAccess := deliveryBundleAccessRules(first.DeliveryRefSnapshot, now.Time, s.delivery.TTL)
+				if order.BuyerSub != "" {
+					for _, item := range items {
+						if err := s.db.InsertEntitlementTx(ctx, tx, &model.Entitlement{
+							Sub: itemBuyerSub(order), ProductID: item.ProductID,
+							Source: model.EntitlementSourceOrder, OrderID: &order.ID,
+						}); err != nil {
+							return err
+						}
+					}
+				}
+				if err := s.db.InsertDeliveryGrantTx(ctx, tx, &model.DeliveryGrant{
+					OrderID: order.ID, OrderItemID: first.ID,
+					BuyerSub: order.BuyerSub, BuyerEmail: order.BuyerEmail,
+					TokenHash: tokenHash, DeliveryRef: first.DeliveryRefSnapshot,
+					State: "active", ExpiresAt: grantAccess.ExpiresAt,
+					MaxDownloads: grantAccess.MaxDownloads,
+				}); err != nil {
+					return err
+				}
+				if err := s.publishOrderFulfilled(
+					ctx, tx, order, observation.Provider, observation.OccurredAt,
+				); err != nil {
+					return err
+				}
+				fulfilledOrder = order
+				fulfilledItem = first
+				result.Grant = &CheckoutGrantResult{
+					Token: rawToken, State: model.DeliveryStateGranted,
+					DeliveryRef: first.DeliveryRefSnapshot,
+				}
+			}
+		}
+		result.Processing = paymentrecovery.ProcessingApplied
+		return s.db.FinalizeProviderEventTx(
+			ctx, tx, event.ID, order.ID, attempt.ID, result.Processing, "",
+		)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if fulfilledOrder != nil && fulfilledItem != nil {
+		s.sendDeliveryMail(ctx, fulfilledOrder, fulfilledItem, rawToken)
+	}
+	return result, nil
 }
 
 func (s *Service) publishOrderFulfilled(

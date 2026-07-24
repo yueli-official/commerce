@@ -132,9 +132,17 @@ func ApplyPayment(current Payment, observation PaymentObservation) (Payment, boo
 	if err := validatePaymentObservation(observation); err != nil {
 		return Payment{}, false, err
 	}
-	if current.Provider != observation.Provider || current.Merchant != observation.Merchant ||
-		current.OrderNo != observation.OrderNo || current.Money != observation.Money {
-		return Payment{}, false, ErrBindingConflict
+	if current.Provider != observation.Provider {
+		return Payment{}, false, fmt.Errorf("%w: provider", ErrBindingConflict)
+	}
+	if current.Merchant != observation.Merchant {
+		return Payment{}, false, fmt.Errorf("%w: merchant", ErrBindingConflict)
+	}
+	if current.OrderNo != observation.OrderNo {
+		return Payment{}, false, fmt.Errorf("%w: order", ErrBindingConflict)
+	}
+	if current.Money != observation.Money {
+		return Payment{}, false, fmt.Errorf("%w: money", ErrBindingConflict)
 	}
 	if current.ProviderTxID != "" && observation.ProviderTxID != "" &&
 		current.ProviderTxID != observation.ProviderTxID {
@@ -179,10 +187,20 @@ func ApplyRefund(current Refund, observation RefundObservation) (Refund, bool, e
 	if err := validateRefundObservation(observation); err != nil {
 		return Refund{}, false, err
 	}
-	if current.Provider != observation.Provider || current.Merchant != observation.Merchant ||
-		current.OrderNo != observation.OrderNo || current.RefundNo != observation.RefundNo ||
-		current.Money != observation.Money {
-		return Refund{}, false, ErrBindingConflict
+	if current.Provider != observation.Provider {
+		return Refund{}, false, fmt.Errorf("%w: provider", ErrBindingConflict)
+	}
+	if current.Merchant != observation.Merchant {
+		return Refund{}, false, fmt.Errorf("%w: merchant", ErrBindingConflict)
+	}
+	if current.OrderNo != observation.OrderNo {
+		return Refund{}, false, fmt.Errorf("%w: order", ErrBindingConflict)
+	}
+	if current.RefundNo != observation.RefundNo {
+		return Refund{}, false, fmt.Errorf("%w: refund", ErrBindingConflict)
+	}
+	if current.Money != observation.Money {
+		return Refund{}, false, fmt.Errorf("%w: money", ErrBindingConflict)
 	}
 	if current.ProviderRefundID != "" && observation.ProviderRefundID != "" &&
 		current.ProviderRefundID != observation.ProviderRefundID {

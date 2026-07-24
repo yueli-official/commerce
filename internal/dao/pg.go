@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"platform/services/commerce/internal/model"
+	"platform/services/commerce/internal/paymentrecovery"
 )
 
 // PG wraps the GoFrame gdb handle.
@@ -271,6 +272,15 @@ func (r *PG) OrderItems(ctx context.Context, orderID string) ([]*model.OrderItem
 	return items, nil
 }
 
+func (r *PG) OrderItemsTx(ctx context.Context, tx gdb.TX, orderID string) ([]*model.OrderItem, error) {
+	var items []*model.OrderItem
+	err := tx.Ctx(ctx).Model("order_items").
+		Where("order_id", orderID).
+		Order("created_at ASC").
+		Scan(&items)
+	return items, err
+}
+
 func (r *PG) OrderItemByID(ctx context.Context, id string) (*model.OrderItem, error) {
 	var item *model.OrderItem
 	if err := r.db.Model("order_items").Ctx(ctx).Where("id", id).Limit(1).Scan(&item); err != nil {
@@ -402,6 +412,197 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.AmountCents, event.Success, event.Message,
 	)
 	return err
+}
+
+// ReserveProviderEventTx appends immutable verified evidence. The unique
+// provider/merchant/idempotency key serializes concurrent replays. The caller
+// must compare SameEvidence when inserted is false.
+func (r *PG) ReserveProviderEventTx(
+	ctx context.Context,
+	tx gdb.TX,
+	event *paymentrecovery.ProviderEvent,
+) (*paymentrecovery.ProviderEvent, bool, error) {
+	if event.ID == "" {
+		event.ID = uuid.NewString()
+	}
+	result, err := tx.Ctx(ctx).Exec(`
+INSERT INTO provider_events (
+    id, provider, merchant_account, source, operation, idempotency_key,
+    provider_event_id, payload_digest, provider_status, normalized_status,
+    order_no, provider_object_id, order_id, payment_attempt_id, refund_id,
+    dispute_id, amount_cents, currency, occurred_at, processing_state
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (provider, merchant_account, idempotency_key) DO NOTHING`,
+		event.ID, event.Provider, event.Merchant, event.Source, event.Operation,
+		event.IdempotencyKey, event.ProviderEventID, event.PayloadDigest,
+		event.ProviderStatus, event.NormalizedStatus, event.OrderNo,
+		event.ProviderObjectID, nullableString(event.OrderID),
+		nullableString(event.PaymentAttemptID), nullableString(event.RefundID),
+		nullableString(event.DisputeID), event.AmountCents, event.Currency,
+		event.OccurredAt, event.Processing,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return nil, false, err
+	}
+	if affected > 0 {
+		copy := *event
+		return &copy, true, nil
+	}
+	var existing *paymentrecovery.ProviderEvent
+	err = tx.Ctx(ctx).Model("provider_events").
+		Where("provider", event.Provider).
+		Where("merchant_account", event.Merchant).
+		Where("idempotency_key", event.IdempotencyKey).
+		LockUpdate().
+		Limit(1).
+		Scan(&existing)
+	if err != nil {
+		return nil, false, err
+	}
+	return existing, false, nil
+}
+
+func (r *PG) FinalizeProviderEventTx(
+	ctx context.Context,
+	tx gdb.TX,
+	eventID, orderID, paymentAttemptID string,
+	state paymentrecovery.ProcessingState,
+	processingError string,
+) error {
+	data := g.Map{
+		"processing_state": state,
+		"processing_error": strings.TrimSpace(processingError),
+		"processed_at":     gtime.Now(),
+	}
+	if orderID != "" {
+		data["order_id"] = orderID
+	}
+	if paymentAttemptID != "" {
+		data["payment_attempt_id"] = paymentAttemptID
+	}
+	_, err := tx.Ctx(ctx).Model("provider_events").Where("id", eventID).Data(data).Update()
+	return err
+}
+
+func (r *PG) ProviderEventByKey(
+	ctx context.Context,
+	provider, merchant, idempotencyKey string,
+) (*paymentrecovery.ProviderEvent, error) {
+	var event *paymentrecovery.ProviderEvent
+	err := r.db.Model("provider_events").Ctx(ctx).
+		Where("provider", provider).
+		Where("merchant_account", merchant).
+		Where("idempotency_key", idempotencyKey).
+		Limit(1).
+		Scan(&event)
+	return event, err
+}
+
+func (r *PG) GetOrderByNoTxForUpdate(ctx context.Context, tx gdb.TX, orderNo string) (*model.Order, error) {
+	var order *model.Order
+	err := tx.Ctx(ctx).Model("orders").
+		Where("order_no", orderNo).
+		LockUpdate().
+		Limit(1).
+		Scan(&order)
+	return order, err
+}
+
+func (r *PG) EnsurePaymentAttemptTx(
+	ctx context.Context,
+	tx gdb.TX,
+	order *model.Order,
+	provider, merchant string,
+) (*paymentrecovery.PaymentAttemptRecord, error) {
+	idempotencyKey := "order:" + order.ID
+	_, err := tx.Ctx(ctx).Exec(`
+INSERT INTO payment_attempts (
+    id, order_id, provider, merchant_account, idempotency_key, status,
+    amount_cents, currency, provider_session_id
+)
+VALUES (?, ?, ?, ?, ?, 'created', ?, ?, ?)
+ON CONFLICT (provider, merchant_account, idempotency_key) DO NOTHING`,
+		uuid.NewString(), order.ID, provider, merchant, idempotencyKey,
+		order.AmountCents, strings.ToUpper(order.Currency), order.PaymentSessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	var attempt *paymentrecovery.PaymentAttemptRecord
+	err = tx.Ctx(ctx).Model("payment_attempts").
+		Where("provider", provider).
+		Where("merchant_account", merchant).
+		Where("idempotency_key", idempotencyKey).
+		LockUpdate().
+		Limit(1).
+		Scan(&attempt)
+	return attempt, err
+}
+
+func (r *PG) UpdatePaymentAttemptTx(
+	ctx context.Context,
+	tx gdb.TX,
+	attemptID string,
+	payment paymentrecovery.Payment,
+) error {
+	_, err := tx.Ctx(ctx).Model("payment_attempts").Where("id", attemptID).Data(g.Map{
+		"status":           payment.Status,
+		"provider_tx_id":   payment.ProviderTxID,
+		"revision":         payment.Revision,
+		"last_observed_at": payment.LastObservedAt,
+		"updated_at":       gtime.Now(),
+	}).Update()
+	return err
+}
+
+func (r *PG) UpdateOrderPaymentStateTx(
+	ctx context.Context,
+	tx gdb.TX,
+	orderID string,
+	status paymentrecovery.PaymentStatus,
+) error {
+	_, err := tx.Ctx(ctx).Model("orders").Where("id", orderID).Data(g.Map{
+		"payment_state": status,
+		"updated_at":    gtime.Now(),
+	}).Update()
+	return err
+}
+
+// FulfillRecoveredCheckoutTx lets authoritative provider evidence repair a
+// locally cancelled order. A local cancel never cancels provider money.
+func (r *PG) FulfillRecoveredCheckoutTx(
+	ctx context.Context,
+	tx gdb.TX,
+	orderID, providerTxID string,
+	paidAt *gtime.Time,
+) (bool, error) {
+	result, err := tx.Ctx(ctx).Model("orders").
+		Where("id", orderID).
+		WhereIn("status", []string{
+			model.OrderStatusPending,
+			model.OrderStatusPaying,
+			model.OrderStatusCancelled,
+		}).
+		Data(g.Map{
+			"status":         model.OrderStatusFulfilled,
+			"payment_state":  paymentrecovery.PaymentSettled,
+			"delivery_state": model.DeliveryStateGranted,
+			"fulfilled_at":   paidAt,
+			"updated_at":     gtime.Now(),
+			"provider_tx_id": providerTxID,
+			"paid_at":        paidAt,
+		}).
+		Update()
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
 }
 
 func (r *PG) InsertDeliveryGrantTx(ctx context.Context, tx gdb.TX, grant *model.DeliveryGrant) error {
