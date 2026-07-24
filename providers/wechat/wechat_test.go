@@ -144,6 +144,27 @@ func TestWeChatNotifyMapsSuccessfulTransaction(t *testing.T) {
 	}
 }
 
+func TestWeChatQueryMapsPendingTransaction(t *testing.T) {
+	querySvc := &fakeWeChatHealthService{tx: &payments.Transaction{
+		OutTradeNo: ptrString("ORD-WX-QUERY"),
+		TradeState: ptrString("USERPAYING"),
+		Amount: &payments.TransactionAmount{
+			Total: ptrInt64(1234), Currency: ptrString("CNY"),
+		},
+	}}
+	gw := &wechatProvider{merchantID: "merchant-1", healthSvc: querySvc}
+	out, err := gw.QueryPayment(context.Background(), paykit.QueryPaymentIn{
+		OrderNo: "ORD-WX-QUERY", AmountCents: 1234, Currency: "CNY",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Success || out.Status != paykit.PaymentStatusPending ||
+		out.ProviderStatus != "USERPAYING" || out.AmountCents != 1234 {
+		t.Fatalf("query output = %+v", out)
+	}
+}
+
 type fakeWeChatNativeService struct {
 	lastPrepay native.PrepayRequest
 	prepay     *native.PrepayResponse
@@ -165,11 +186,12 @@ type fakeWeChatHealthService struct {
 	result *wechatCore.APIResult
 	err    error
 	calls  int
+	tx     *payments.Transaction
 }
 
 func (service *fakeWeChatHealthService) QueryOrderByOutTradeNo(context.Context, native.QueryOrderByOutTradeNoRequest) (*payments.Transaction, *wechatCore.APIResult, error) {
 	service.calls++
-	return nil, service.result, service.err
+	return service.tx, service.result, service.err
 }
 
 func (f *fakeWeChatRefundService) Create(ctx context.Context, req refunddomestic.CreateRequest) (*refunddomestic.Refund, error) {

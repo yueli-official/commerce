@@ -241,6 +241,49 @@ func TestPayPalCaptureRejectsAmountMismatch(t *testing.T) {
 	}
 }
 
+func TestPayPalQueryPaymentMapsCompletedOrder(t *testing.T) {
+	srv := paypalTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v2/checkout/orders/PAYPAL-ORDER-1" {
+			t.Fatalf("query request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.ContentLength > 0 {
+			t.Fatalf("GET query content length = %d", r.ContentLength)
+		}
+		writeJSON(t, w, map[string]any{
+			"id": "PAYPAL-ORDER-1", "status": "COMPLETED",
+			"purchase_units": []map[string]any{{
+				"reference_id": "ORD-PP-1",
+				"amount":       map[string]any{"currency_code": "USD", "value": "12.34"},
+				"payments": map[string]any{
+					"captures": []map[string]any{{
+						"id": "CAPTURE-1", "status": "COMPLETED",
+						"amount": map[string]any{"currency_code": "USD", "value": "12.34"},
+					}},
+				},
+			}},
+		})
+	})
+	defer srv.Close()
+
+	gw := newPayPalTestProvider(t, srv.URL)
+	queryGW, ok := gw.(paykit.QueryPaymentProvider)
+	if !ok {
+		t.Fatal("paypal provider does not implement QueryPaymentProvider")
+	}
+	out, err := queryGW.QueryPayment(context.Background(), paykit.QueryPaymentIn{
+		OrderNo: "ORD-PP-1", SessionID: "PAYPAL-ORDER-1",
+		AmountCents: 1234, Currency: "USD",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Success || out.Status != paykit.PaymentStatusSettled ||
+		out.ProviderTxID != "CAPTURE-1" || out.AmountCents != 1234 ||
+		out.Currency != "USD" || out.ProviderStatus != "COMPLETED" {
+		t.Fatalf("query output = %+v", out)
+	}
+}
+
 func paypalTestServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

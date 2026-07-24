@@ -193,9 +193,6 @@ func queryOutFromTradeQuery(rsp *smartalipay.TradeQueryRsp, expectedAmountCents 
 		return nil, fmt.Errorf("alipay query response is empty")
 	}
 	status := rsp.TradeStatus
-	if status != smartalipay.TradeStatusSuccess && status != smartalipay.TradeStatusFinished {
-		return &paykit.QueryPaymentOut{Success: false, OrderNo: rsp.OutTradeNo, ProviderTxID: rsp.TradeNo}, nil
-	}
 	amount, err := strconv.ParseFloat(rsp.TotalAmount, 64)
 	if err != nil {
 		return nil, fmt.Errorf("alipay query amount parse %q: %w", rsp.TotalAmount, err)
@@ -204,12 +201,24 @@ func queryOutFromTradeQuery(rsp *smartalipay.TradeQueryRsp, expectedAmountCents 
 	if expectedAmountCents > 0 && amountCents != expectedAmountCents {
 		return nil, fmt.Errorf("alipay query amount mismatch: got %d, want %d", amountCents, expectedAmountCents)
 	}
-	return &paykit.QueryPaymentOut{
-		Success:      true,
-		OrderNo:      rsp.OutTradeNo,
-		ProviderTxID: rsp.TradeNo,
-		AmountCents:  amountCents,
-	}, nil
+	out := &paykit.QueryPaymentOut{
+		OrderNo: rsp.OutTradeNo, ProviderTxID: rsp.TradeNo,
+		AmountCents: amountCents, Currency: "CNY",
+		ObservationID:  "alipay:query:" + rsp.OutTradeNo + ":" + string(status),
+		ProviderStatus: string(status),
+	}
+	switch status {
+	case smartalipay.TradeStatusSuccess, smartalipay.TradeStatusFinished:
+		out.Success = true
+		out.Status = paykit.PaymentStatusSettled
+	case smartalipay.TradeStatusWaitBuyerPay:
+		out.Status = paykit.PaymentStatusPending
+	case smartalipay.TradeStatusClosed:
+		out.Status = paykit.PaymentStatusCancelled
+	default:
+		return nil, fmt.Errorf("alipay query unsupported trade status %q", status)
+	}
+	return out, nil
 }
 
 func (p *alipayProvider) Refund(context.Context, paykit.RefundIn) (*paykit.RefundOut, error) {

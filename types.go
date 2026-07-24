@@ -94,15 +94,22 @@ type NotifyOut struct {
 
 type QueryPaymentIn struct {
 	OrderNo      string
+	SessionID    string
 	ProviderTxID string
 	AmountCents  int
+	Currency     string
 }
 
 type QueryPaymentOut struct {
-	Success      bool
-	OrderNo      string
-	ProviderTxID string
-	AmountCents  int
+	Success        bool
+	OrderNo        string
+	ProviderTxID   string
+	AmountCents    int
+	Currency       string
+	ObservationID  string
+	Status         PaymentStatus
+	ProviderStatus string
+	ObservedAt     time.Time
 }
 
 type RefundIn struct {

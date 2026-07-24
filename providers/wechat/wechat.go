@@ -144,6 +144,20 @@ func (p *wechatProvider) CheckHealth(ctx context.Context) error {
 	return fmt.Errorf("wechat health query: %w", err)
 }
 
+func (p *wechatProvider) QueryPayment(ctx context.Context, in paykit.QueryPaymentIn) (*paykit.QueryPaymentOut, error) {
+	if p.healthSvc == nil {
+		return nil, fmt.Errorf("wechat payment query service is not configured")
+	}
+	tx, _, err := p.healthSvc.QueryOrderByOutTradeNo(ctx, native.QueryOrderByOutTradeNoRequest{
+		OutTradeNo: wechatCore.String(in.OrderNo),
+		Mchid:      wechatCore.String(p.merchantID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("wechat payment query: %w", err)
+	}
+	return queryOutFromTransaction(tx, in.AmountCents)
+}
+
 func (p *wechatProvider) CreatePayment(ctx context.Context, in paykit.CreatePaymentIn) (*paykit.CreatePaymentOut, error) {
 	if p.nativeSvc == nil {
 		return nil, fmt.Errorf("wechat native service is not configured")
@@ -276,6 +290,55 @@ func (p *wechatProvider) Refund(ctx context.Context, in paykit.RefundIn) (*payki
 		success = false
 	}
 	return &paykit.RefundOut{Success: success, ProviderID: *refund.RefundId, AmountCents: in.AmountCents}, nil
+}
+
+func queryOutFromTransaction(tx *payments.Transaction, expectedAmountCents int) (*paykit.QueryPaymentOut, error) {
+	if tx == nil || tx.TradeState == nil {
+		return nil, fmt.Errorf("wechat payment query returned no trade state")
+	}
+	if tx.OutTradeNo == nil || strings.TrimSpace(*tx.OutTradeNo) == "" {
+		return nil, fmt.Errorf("wechat payment query missing out_trade_no")
+	}
+	amountCents := 0
+	currency := "CNY"
+	if tx.Amount != nil && tx.Amount.Total != nil {
+		amountCents = int(*tx.Amount.Total)
+	}
+	if tx.Amount != nil && tx.Amount.Currency != nil && strings.TrimSpace(*tx.Amount.Currency) != "" {
+		currency = strings.ToUpper(strings.TrimSpace(*tx.Amount.Currency))
+	}
+	if expectedAmountCents > 0 && amountCents != expectedAmountCents {
+		return nil, fmt.Errorf(
+			"wechat payment query amount mismatch: got %d, want %d",
+			amountCents, expectedAmountCents,
+		)
+	}
+	status := strings.TrimSpace(*tx.TradeState)
+	out := &paykit.QueryPaymentOut{
+		OrderNo: *tx.OutTradeNo, AmountCents: amountCents, Currency: currency,
+		ObservationID:  "wechat:query:" + *tx.OutTradeNo + ":" + status,
+		ProviderStatus: status,
+	}
+	if tx.TransactionId != nil {
+		out.ProviderTxID = strings.TrimSpace(*tx.TransactionId)
+	}
+	switch status {
+	case "SUCCESS":
+		if out.ProviderTxID == "" {
+			return nil, fmt.Errorf("wechat successful payment query missing transaction_id")
+		}
+		out.Success = true
+		out.Status = paykit.PaymentStatusSettled
+	case "NOTPAY", "USERPAYING":
+		out.Status = paykit.PaymentStatusPending
+	case "CLOSED", "REVOKED":
+		out.Status = paykit.PaymentStatusCancelled
+	case "PAYERROR":
+		out.Status = paykit.PaymentStatusFailed
+	default:
+		return nil, fmt.Errorf("wechat payment query unsupported trade state %q", status)
+	}
+	return out, nil
 }
 
 type wechatNativeAPI struct {

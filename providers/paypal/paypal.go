@@ -140,6 +140,25 @@ func (p *paypalProvider) VerifyNotify(context.Context, []byte, map[string]string
 	return nil, paykit.ErrUnsupportedOperation
 }
 
+func (p *paypalProvider) QueryPayment(ctx context.Context, in paykit.QueryPaymentIn) (*paykit.QueryPaymentOut, error) {
+	sessionID := strings.TrimSpace(in.SessionID)
+	if sessionID == "" {
+		return nil, fmt.Errorf("paypal order session id is required for payment query")
+	}
+	token, err := p.accessToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var order paypalCaptureOrderRes
+	if err := p.doJSON(
+		ctx, http.MethodGet, "/v2/checkout/orders/"+url.PathEscape(sessionID),
+		token, nil, &order,
+	); err != nil {
+		return nil, fmt.Errorf("paypal query order: %w", err)
+	}
+	return queryOutFromOrder(order, in.OrderNo, in.AmountCents, in.Currency)
+}
+
 func (p *paypalProvider) Refund(ctx context.Context, in paykit.RefundIn) (*paykit.RefundOut, error) {
 	if strings.TrimSpace(in.ProviderTxID) == "" {
 		return nil, fmt.Errorf("paypal capture id is required for refund")
@@ -201,16 +220,22 @@ func (p *paypalProvider) accessToken(ctx context.Context) (string, error) {
 }
 
 func (p *paypalProvider) doJSON(ctx context.Context, method, path, token string, in any, out any) error {
-	body, err := json.Marshal(in)
-	if err != nil {
-		return err
+	var body io.Reader
+	if in != nil {
+		encoded, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(encoded)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, p.baseURL+path, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, p.baseURL+path, body)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set("Accept", "application/json")
 
 	res, err := p.httpClient.Do(req)
@@ -276,10 +301,79 @@ type paypalCaptureOrderRes struct {
 	ID            string `json:"id"`
 	Status        string `json:"status"`
 	PurchaseUnits []struct {
-		Payments struct {
+		ReferenceID string       `json:"reference_id"`
+		Amount      paypalAmount `json:"amount"`
+		Payments    struct {
 			Captures []paypalCapture `json:"captures"`
 		} `json:"payments"`
 	} `json:"purchase_units"`
+}
+
+func queryOutFromOrder(
+	order paypalCaptureOrderRes,
+	expectedOrderNo string,
+	expectedAmountCents int,
+	expectedCurrency string,
+) (*paykit.QueryPaymentOut, error) {
+	if order.ID == "" || order.Status == "" {
+		return nil, fmt.Errorf("paypal query returned incomplete order")
+	}
+	out := &paykit.QueryPaymentOut{
+		OrderNo: expectedOrderNo, ObservationID: "paypal:query:" + order.ID + ":" + order.Status,
+		ProviderStatus: order.Status,
+	}
+	if len(order.PurchaseUnits) > 0 {
+		unit := order.PurchaseUnits[0]
+		if strings.TrimSpace(unit.ReferenceID) != "" {
+			out.OrderNo = strings.TrimSpace(unit.ReferenceID)
+		}
+		if unit.Amount.Value != "" {
+			amountCents, err := paypalAmountToCents(unit.Amount.Value)
+			if err != nil {
+				return nil, fmt.Errorf("paypal query amount: %w", err)
+			}
+			out.AmountCents = amountCents
+			out.Currency = strings.ToUpper(strings.TrimSpace(unit.Amount.CurrencyCode))
+		}
+	}
+	switch order.Status {
+	case "COMPLETED":
+		capture, err := order.completedCapture()
+		if err != nil {
+			return nil, err
+		}
+		out.ProviderTxID = capture.ID
+		out.AmountCents, err = paypalAmountToCents(capture.Amount.Value)
+		if err != nil {
+			return nil, fmt.Errorf("paypal capture query amount: %w", err)
+		}
+		out.Currency = strings.ToUpper(strings.TrimSpace(capture.Amount.CurrencyCode))
+		out.Success = true
+		out.Status = paykit.PaymentStatusSettled
+	case "CREATED", "SAVED", "APPROVED", "PAYER_ACTION_REQUIRED":
+		out.Status = paykit.PaymentStatusPending
+	case "VOIDED":
+		out.Status = paykit.PaymentStatusCancelled
+	default:
+		return nil, fmt.Errorf("paypal query unsupported order status %q", order.Status)
+	}
+	if expectedOrderNo != "" && out.OrderNo != expectedOrderNo {
+		return nil, fmt.Errorf("paypal query order mismatch: got %q, want %q", out.OrderNo, expectedOrderNo)
+	}
+	if expectedAmountCents > 0 && out.AmountCents != expectedAmountCents {
+		return nil, fmt.Errorf(
+			"paypal query amount mismatch: got %d, want %d",
+			out.AmountCents, expectedAmountCents,
+		)
+	}
+	expectedCurrency = strings.ToUpper(strings.TrimSpace(expectedCurrency))
+	if expectedCurrency != "" && out.Currency != expectedCurrency {
+		return nil, fmt.Errorf(
+			"paypal query currency mismatch: got %q, want %q",
+			out.Currency, expectedCurrency,
+		)
+	}
+	return out, nil
 }
 
 type paypalCapture struct {
