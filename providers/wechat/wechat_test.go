@@ -91,10 +91,9 @@ func TestWeChatRefundUsesOutTradeNoAndRefundNo(t *testing.T) {
 	}
 
 	out, err := gw.Refund(context.Background(), paykit.RefundIn{
-		OrderNo:      "ORD-WX-1",
-		ProviderTxID: "WX-TX-1",
-		AmountCents:  1234,
-		Reason:       "customer request",
+		OrderNo: "ORD-WX-1", RefundNo: "REFUND-WX-1",
+		ProviderTxID: "WX-TX-1", AmountCents: 1234,
+		TotalAmountCents: 2000, Currency: "CNY", Reason: "customer request",
 	})
 	if err != nil {
 		t.Fatalf("Refund: %v", err)
@@ -106,13 +105,13 @@ func TestWeChatRefundUsesOutTradeNoAndRefundNo(t *testing.T) {
 	if *req.TransactionId != "WX-TX-1" {
 		t.Fatalf("transaction id = %q", *req.TransactionId)
 	}
-	if *req.OutRefundNo != "ORD-WX-1-RF" {
+	if *req.OutRefundNo != "REFUND-WX-1" {
 		t.Fatalf("out refund no = %q", *req.OutRefundNo)
 	}
 	if *req.Reason != "customer request" {
 		t.Fatalf("reason = %q", *req.Reason)
 	}
-	if *req.Amount.Total != int64(1234) || *req.Amount.Refund != int64(1234) || *req.Amount.Currency != "CNY" {
+	if *req.Amount.Total != int64(2000) || *req.Amount.Refund != int64(1234) || *req.Amount.Currency != "CNY" {
 		t.Fatalf("amount = %+v", req.Amount)
 	}
 }

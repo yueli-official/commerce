@@ -169,23 +169,41 @@ func (p *paypalProvider) Refund(ctx context.Context, in paykit.RefundIn) (*payki
 	}
 	reqBody := paypalRefundReq{
 		Amount: paypalAmount{
-			CurrencyCode: "USD",
+			CurrencyCode: strings.ToUpper(strings.TrimSpace(in.Currency)),
 			Value:        centsToPayPalAmount(in.AmountCents),
 		},
 		NoteToPayer: in.Reason,
 	}
 	var out paypalRefundRes
 	path := "/v2/payments/captures/" + url.PathEscape(in.ProviderTxID) + "/refund"
-	if err := p.doJSON(ctx, http.MethodPost, path, token, reqBody, &out); err != nil {
+	if err := p.doJSONWithHeaders(
+		ctx, http.MethodPost, path, token, reqBody, &out,
+		map[string]string{"PayPal-Request-Id": in.IdempotencyKey},
+	); err != nil {
 		return nil, fmt.Errorf("paypal refund capture: %w", err)
 	}
 	if out.ID == "" {
 		return nil, fmt.Errorf("paypal refund returned empty id")
 	}
-	if out.Status != "" && out.Status != "COMPLETED" && out.Status != "PENDING" {
+	result := &paykit.RefundOut{
+		ProviderID: out.ID, AmountCents: in.AmountCents,
+		Currency:       strings.ToUpper(strings.TrimSpace(in.Currency)),
+		ProviderStatus: out.Status,
+	}
+	switch out.Status {
+	case "COMPLETED":
+		result.Success = true
+		result.Status = paykit.RefundStatusSucceeded
+	case "PENDING", "":
+		result.Status = paykit.RefundStatusPending
+	case "FAILED":
+		result.Status = paykit.RefundStatusFailed
+	case "CANCELLED":
+		result.Status = paykit.RefundStatusCancelled
+	default:
 		return nil, fmt.Errorf("paypal refund status %q", out.Status)
 	}
-	return &paykit.RefundOut{Success: true, ProviderID: out.ID, AmountCents: in.AmountCents}, nil
+	return result, nil
 }
 
 func (p *paypalProvider) accessToken(ctx context.Context) (string, error) {
@@ -220,6 +238,16 @@ func (p *paypalProvider) accessToken(ctx context.Context) (string, error) {
 }
 
 func (p *paypalProvider) doJSON(ctx context.Context, method, path, token string, in any, out any) error {
+	return p.doJSONWithHeaders(ctx, method, path, token, in, out, nil)
+}
+
+func (p *paypalProvider) doJSONWithHeaders(
+	ctx context.Context,
+	method, path, token string,
+	in any,
+	out any,
+	headers map[string]string,
+) error {
 	var body io.Reader
 	if in != nil {
 		encoded, err := json.Marshal(in)
@@ -237,6 +265,11 @@ func (p *paypalProvider) doJSON(ctx context.Context, method, path, token string,
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
+	for key, value := range headers {
+		if strings.TrimSpace(value) != "" {
+			req.Header.Set(key, value)
+		}
+	}
 
 	res, err := p.httpClient.Do(req)
 	if err != nil {

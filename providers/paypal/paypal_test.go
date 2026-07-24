@@ -193,16 +193,19 @@ func TestPayPalRefundPaymentUsesCaptureRefund(t *testing.T) {
 		if body.NoteToPayer != "customer request" {
 			t.Fatalf("refund note = %q", body.NoteToPayer)
 		}
+		if r.Header.Get("PayPal-Request-Id") != "refund-request-1" {
+			t.Fatalf("PayPal-Request-Id = %q", r.Header.Get("PayPal-Request-Id"))
+		}
 		writeJSON(t, w, map[string]any{"id": "REFUND-1", "status": "COMPLETED"})
 	})
 	defer srv.Close()
 
 	gw := newPayPalTestProvider(t, srv.URL)
 	out, err := gw.Refund(context.Background(), paykit.RefundIn{
-		OrderNo:      "ORD-PP-1",
-		ProviderTxID: "CAPTURE-1",
-		AmountCents:  1234,
-		Reason:       "customer request",
+		OrderNo: "ORD-PP-1", RefundNo: "REFUND-PP-1",
+		ProviderTxID: "CAPTURE-1", AmountCents: 1234,
+		TotalAmountCents: 2000, Currency: "USD", Reason: "customer request",
+		IdempotencyKey: "refund-request-1",
 	})
 	if err != nil {
 		t.Fatalf("Refund: %v", err)

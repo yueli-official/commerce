@@ -43,6 +43,15 @@ const (
 	PaymentStatusCancelled PaymentStatus = "cancelled"
 )
 
+type RefundStatus string
+
+const (
+	RefundStatusPending   RefundStatus = "pending"
+	RefundStatusSucceeded RefundStatus = "succeeded"
+	RefundStatusFailed    RefundStatus = "failed"
+	RefundStatusCancelled RefundStatus = "cancelled"
+)
+
 // HealthChecker verifies credentials and provider connectivity without
 // creating, capturing, refunding, or otherwise mutating a payment.
 type HealthChecker interface {
@@ -113,14 +122,21 @@ type QueryPaymentOut struct {
 }
 
 type RefundIn struct {
-	OrderNo      string
-	ProviderTxID string
-	AmountCents  int
-	Reason       string
+	OrderNo          string
+	RefundNo         string
+	ProviderTxID     string
+	AmountCents      int
+	TotalAmountCents int
+	Currency         string
+	Reason           string
+	IdempotencyKey   string
 }
 
 type RefundOut struct {
-	Success     bool
-	ProviderID  string
-	AmountCents int
+	Success        bool
+	ProviderID     string
+	AmountCents    int
+	Currency       string
+	Status         RefundStatus
+	ProviderStatus string
 }

@@ -270,11 +270,11 @@ func (p *wechatProvider) Refund(ctx context.Context, in paykit.RefundIn) (*payki
 	currency := "CNY"
 	req := refunddomestic.CreateRequest{
 		TransactionId: wechatCore.String(in.ProviderTxID),
-		OutRefundNo:   wechatCore.String(in.OrderNo + "-RF"),
+		OutRefundNo:   wechatCore.String(in.RefundNo),
 		Reason:        wechatCore.String(in.Reason),
 		Amount: &refunddomestic.AmountReq{
 			Refund:   wechatCore.Int64(int64(in.AmountCents)),
-			Total:    wechatCore.Int64(int64(in.AmountCents)),
+			Total:    wechatCore.Int64(int64(in.TotalAmountCents)),
 			Currency: wechatCore.String(currency),
 		},
 	}
@@ -285,11 +285,30 @@ func (p *wechatProvider) Refund(ctx context.Context, in paykit.RefundIn) (*payki
 	if refund == nil || refund.RefundId == nil || strings.TrimSpace(*refund.RefundId) == "" {
 		return nil, fmt.Errorf("wechat refund returned empty refund id")
 	}
-	success := true
-	if refund.Status != nil && *refund.Status == refunddomestic.STATUS_ABNORMAL {
-		success = false
+	out := &paykit.RefundOut{
+		ProviderID: *refund.RefundId, AmountCents: in.AmountCents,
+		Currency: currency,
 	}
-	return &paykit.RefundOut{Success: success, ProviderID: *refund.RefundId, AmountCents: in.AmountCents}, nil
+	if refund.Status == nil {
+		out.Status = paykit.RefundStatusPending
+		out.ProviderStatus = "PROCESSING"
+		return out, nil
+	}
+	out.ProviderStatus = string(*refund.Status)
+	switch *refund.Status {
+	case refunddomestic.STATUS_SUCCESS:
+		out.Success = true
+		out.Status = paykit.RefundStatusSucceeded
+	case refunddomestic.STATUS_PROCESSING:
+		out.Status = paykit.RefundStatusPending
+	case refunddomestic.STATUS_CLOSED:
+		out.Status = paykit.RefundStatusCancelled
+	case refunddomestic.STATUS_ABNORMAL:
+		out.Status = paykit.RefundStatusFailed
+	default:
+		return nil, fmt.Errorf("wechat refund unsupported status %q", *refund.Status)
+	}
+	return out, nil
 }
 
 func queryOutFromTransaction(tx *payments.Transaction, expectedAmountCents int) (*paykit.QueryPaymentOut, error) {

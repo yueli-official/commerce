@@ -221,6 +221,31 @@ func queryOutFromTradeQuery(rsp *smartalipay.TradeQueryRsp, expectedAmountCents 
 	return out, nil
 }
 
-func (p *alipayProvider) Refund(context.Context, paykit.RefundIn) (*paykit.RefundOut, error) {
-	return nil, paykit.ErrUnsupportedOperation
+func (p *alipayProvider) Refund(ctx context.Context, in paykit.RefundIn) (*paykit.RefundOut, error) {
+	if strings.TrimSpace(in.RefundNo) == "" {
+		return nil, fmt.Errorf("alipay refund number is required")
+	}
+	response, err := p.client.TradeRefund(ctx, smartalipay.TradeRefund{
+		OutTradeNo: in.OrderNo, TradeNo: in.ProviderTxID,
+		RefundAmount: centsToAmount(in.AmountCents),
+		RefundReason: in.Reason, OutRequestNo: in.RefundNo,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("alipay TradeRefund: %w", err)
+	}
+	if response == nil {
+		return nil, fmt.Errorf("alipay TradeRefund returned empty response")
+	}
+	if response.IsFailure() {
+		return nil, fmt.Errorf("alipay TradeRefund failed: %s %s", response.Code, response.SubMsg)
+	}
+	return &paykit.RefundOut{
+		Success: true, ProviderID: in.RefundNo, AmountCents: in.AmountCents,
+		Currency: "CNY", Status: paykit.RefundStatusSucceeded,
+		ProviderStatus: "SUCCESS",
+	}, nil
+}
+
+func centsToAmount(cents int) string {
+	return fmt.Sprintf("%.2f", float64(cents)/100)
 }
