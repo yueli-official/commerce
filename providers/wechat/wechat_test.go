@@ -122,7 +122,7 @@ func TestWeChatNotifyMapsSuccessfulTransaction(t *testing.T) {
 		OutTradeNo:    ptrString("ORD-WX-1"),
 		TransactionId: ptrString("WX-TX-1"),
 		TradeState:    ptrString("SUCCESS"),
-		Amount:        &payments.TransactionAmount{Total: ptrInt64(1234)},
+		Amount:        &payments.TransactionAmount{Total: ptrInt64(1234), Currency: ptrString("CNY")},
 	}}
 	gw := &wechatProvider{notifySvc: notifySvc}
 
@@ -135,6 +135,9 @@ func TestWeChatNotifyMapsSuccessfulTransaction(t *testing.T) {
 	}
 	if !out.Success || out.OrderNo != "ORD-WX-1" || out.ProviderTxID != "WX-TX-1" || out.AmountCents != 1234 {
 		t.Fatalf("unexpected notify output: %+v", out)
+	}
+	if out.EventID != "evt" || out.Status != paykit.PaymentStatusSettled || out.ProviderStatus != "SUCCESS" || out.Currency != "CNY" {
+		t.Fatalf("notify evidence metadata: %+v", out)
 	}
 	if notifySvc.lastBody != `{"id":"evt"}` {
 		t.Fatalf("notify body = %q", notifySvc.lastBody)

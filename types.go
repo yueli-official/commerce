@@ -4,6 +4,7 @@ package paykit
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 var ErrUnsupportedOperation = fmt.Errorf("payment provider operation unsupported")
@@ -29,6 +30,18 @@ type Provider interface {
 type QueryPaymentProvider interface {
 	QueryPayment(ctx context.Context, in QueryPaymentIn) (*QueryPaymentOut, error)
 }
+
+// PaymentStatus is the provider-neutral payment fact returned by verified
+// callbacks and active queries. A provider adapter must not report settled
+// until the provider considers the payment successful.
+type PaymentStatus string
+
+const (
+	PaymentStatusPending   PaymentStatus = "pending"
+	PaymentStatusSettled   PaymentStatus = "settled"
+	PaymentStatusFailed    PaymentStatus = "failed"
+	PaymentStatusCancelled PaymentStatus = "cancelled"
+)
 
 // HealthChecker verifies credentials and provider connectivity without
 // creating, capturing, refunding, or otherwise mutating a payment.
@@ -68,10 +81,15 @@ type CapturePaymentOut struct {
 }
 
 type NotifyOut struct {
-	Success      bool
-	OrderNo      string
-	ProviderTxID string
-	AmountCents  int
+	Success        bool
+	OrderNo        string
+	ProviderTxID   string
+	AmountCents    int
+	Currency       string
+	EventID        string
+	Status         PaymentStatus
+	ProviderStatus string
+	OccurredAt     time.Time
 }
 
 type QueryPaymentIn struct {

@@ -3,6 +3,7 @@ package wechat
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -199,25 +200,50 @@ func (p *wechatProvider) VerifyNotify(ctx context.Context, body []byte, headers 
 	if err != nil {
 		return nil, err
 	}
-	if tx == nil || tx.TradeState == nil || *tx.TradeState != "SUCCESS" {
-		return &paykit.NotifyOut{Success: false}, nil
+	if tx == nil || tx.TradeState == nil {
+		return nil, fmt.Errorf("wechat notify missing trade_state")
 	}
 	if tx.OutTradeNo == nil || strings.TrimSpace(*tx.OutTradeNo) == "" {
 		return nil, fmt.Errorf("wechat notify missing out_trade_no")
 	}
-	if tx.TransactionId == nil || strings.TrimSpace(*tx.TransactionId) == "" {
+	if *tx.TradeState == "SUCCESS" && (tx.TransactionId == nil || strings.TrimSpace(*tx.TransactionId) == "") {
 		return nil, fmt.Errorf("wechat notify missing transaction_id")
 	}
+	var envelope struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, fmt.Errorf("wechat notify envelope parse: %w", err)
+	}
 	amountCents := 0
+	currency := "CNY"
 	if tx.Amount != nil && tx.Amount.Total != nil {
 		amountCents = int(*tx.Amount.Total)
 	}
-	return &paykit.NotifyOut{
-		Success:      true,
-		OrderNo:      *tx.OutTradeNo,
-		ProviderTxID: *tx.TransactionId,
-		AmountCents:  amountCents,
-	}, nil
+	if tx.Amount != nil && tx.Amount.Currency != nil && strings.TrimSpace(*tx.Amount.Currency) != "" {
+		currency = strings.ToUpper(strings.TrimSpace(*tx.Amount.Currency))
+	}
+	out := &paykit.NotifyOut{
+		OrderNo: *tx.OutTradeNo, AmountCents: amountCents, Currency: currency,
+		EventID: strings.TrimSpace(envelope.ID), ProviderStatus: *tx.TradeState,
+	}
+	if tx.TransactionId != nil {
+		out.ProviderTxID = strings.TrimSpace(*tx.TransactionId)
+	}
+	switch *tx.TradeState {
+	case "SUCCESS":
+		out.Success = true
+		out.Status = paykit.PaymentStatusSettled
+	case "NOTPAY", "USERPAYING":
+		out.Status = paykit.PaymentStatusPending
+	case "CLOSED", "REVOKED":
+		out.Status = paykit.PaymentStatusCancelled
+	case "PAYERROR":
+		out.Status = paykit.PaymentStatusFailed
+	default:
+		return nil, fmt.Errorf("wechat notify unsupported trade state %q", *tx.TradeState)
+	}
+	return out, nil
 }
 
 func (p *wechatProvider) Refund(ctx context.Context, in paykit.RefundIn) (*paykit.RefundOut, error) {

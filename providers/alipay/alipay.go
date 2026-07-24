@@ -165,20 +165,27 @@ func (p *alipayProvider) VerifyNotify(_ context.Context, body []byte, _ map[stri
 		return nil, err
 	}
 
-	status := notify.TradeStatus
-	if status == smartalipay.TradeStatusSuccess || status == smartalipay.TradeStatusFinished {
-		amount, err := strconv.ParseFloat(notify.TotalAmount, 64)
-		if err != nil {
-			return nil, fmt.Errorf("alipay notify amount parse %q: %w", notify.TotalAmount, err)
-		}
-		return &paykit.NotifyOut{
-			Success:      true,
-			OrderNo:      notify.OutTradeNo,
-			ProviderTxID: notify.TradeNo,
-			AmountCents:  int(math.Round(amount * 100)),
-		}, nil
+	amount, err := strconv.ParseFloat(notify.TotalAmount, 64)
+	if err != nil {
+		return nil, fmt.Errorf("alipay notify amount parse %q: %w", notify.TotalAmount, err)
 	}
-	return &paykit.NotifyOut{Success: false}, nil
+	out := &paykit.NotifyOut{
+		OrderNo: notify.OutTradeNo, ProviderTxID: notify.TradeNo,
+		AmountCents: int(math.Round(amount * 100)), Currency: "CNY",
+		EventID: notify.NotifyId, ProviderStatus: string(notify.TradeStatus),
+	}
+	switch notify.TradeStatus {
+	case smartalipay.TradeStatusSuccess, smartalipay.TradeStatusFinished:
+		out.Success = true
+		out.Status = paykit.PaymentStatusSettled
+	case smartalipay.TradeStatusWaitBuyerPay:
+		out.Status = paykit.PaymentStatusPending
+	case smartalipay.TradeStatusClosed:
+		out.Status = paykit.PaymentStatusCancelled
+	default:
+		return nil, fmt.Errorf("alipay notify unsupported trade status %q", notify.TradeStatus)
+	}
+	return out, nil
 }
 
 func queryOutFromTradeQuery(rsp *smartalipay.TradeQueryRsp, expectedAmountCents int) (*paykit.QueryPaymentOut, error) {
