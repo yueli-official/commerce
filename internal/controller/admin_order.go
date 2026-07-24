@@ -2,12 +2,17 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
+	"time"
 
 	foundationauth "github.com/yueli-official/foundation/go/auth"
+	"platform/gokit/errs"
 	"platform/paykit"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/model"
+	"platform/services/commerce/internal/paymentrecovery"
 	"platform/services/commerce/internal/service"
 )
 
@@ -87,30 +92,95 @@ func (c *AdminOrder) RefundOrder(ctx context.Context, req *v1.AdminOrderRefundRe
 	if err := requireAdmin(ctx); err != nil {
 		return nil, err
 	}
-	order, err := c.svc.GetOrderByNo(ctx, req.OrderNo)
+	principal, _ := foundationauth.FromContext(ctx)
+	reserved, err := c.svc.RequestRefund(ctx, service.RefundRequestInput{
+		OrderNo: req.OrderNo, AmountCents: req.AmountCents,
+		Reason: req.Reason, RequestedBy: principal.Subject,
+		IdempotencyKey: req.IdempotencyKey,
+	})
 	if err != nil {
 		return nil, err
+	}
+	order := reserved.Order
+	refund := reserved.Refund
+	if refund.Status == paymentrecovery.RefundSucceeded {
+		return &v1.AdminOrderRefundRes{
+			RefundNo: refund.RefundNo, ProviderID: refund.ProviderRefundID,
+			Status: string(refund.Status), OrderStatus: order.Status,
+		}, nil
 	}
 	gw, ok := c.registry[order.PaymentProvider]
 	if !ok {
 		return nil, commerceerr.InvalidRequest("payment provider does not support refund")
 	}
+	if err := c.svc.MarkRefundSubmitting(ctx, refund.RefundNo); err != nil {
+		return nil, err
+	}
 	out, err := gw.Refund(ctx, paykit.RefundIn{
-		OrderNo:      order.OrderNo,
-		ProviderTxID: order.ProviderTxID,
-		AmountCents:  order.AmountCents,
-		Reason:       req.Reason,
+		OrderNo: order.OrderNo, RefundNo: refund.RefundNo,
+		ProviderTxID: order.ProviderTxID, AmountCents: refund.AmountCents,
+		TotalAmountCents: order.AmountCents, Currency: order.Currency,
+		Reason: refund.Reason, IdempotencyKey: refund.IdempotencyKey,
 	})
+	if err != nil {
+		return nil, errs.New(commerceerr.CodeGatewayFailed, "payment gateway error", nil)
+	}
+	status, ok := recoveryRefundStatus(out)
+	if !ok {
+		return nil, commerceerr.InvalidRequest("refund provider returned an unsupported status")
+	}
+	evidence, err := json.Marshal(out)
 	if err != nil {
 		return nil, err
 	}
-	if !out.Success {
-		return nil, commerceerr.InvalidRequest("refund was not accepted")
+	providerStatus := strings.TrimSpace(out.ProviderStatus)
+	if providerStatus == "" {
+		providerStatus = string(out.Status)
 	}
-	if err := c.svc.MarkRefunded(ctx, order.OrderNo, out.ProviderID); err != nil {
+	accepted, err := c.svc.AcceptRefundObservation(ctx, paymentrecovery.RefundObservation{
+		Status: status, Provider: order.PaymentProvider, Merchant: "primary",
+		OrderNo: order.OrderNo, RefundNo: refund.RefundNo,
+		ProviderRefundID: out.ProviderID,
+		Money: paymentrecovery.Money{
+			AmountCents: refund.AmountCents, Currency: refund.Currency,
+		},
+		Source: paymentrecovery.SourceMutation, Authoritative: true,
+		IdempotencyKey: refund.RefundNo + ":mutation:" + providerStatus,
+		PayloadDigest:  paymentrecovery.DigestPayload(evidence),
+		OccurredAt:     time.Now().UTC(),
+	}, providerStatus)
+	if err != nil {
 		return nil, err
 	}
-	return &v1.AdminOrderRefundRes{ProviderID: out.ProviderID, Status: model.OrderStatusRefunded}, nil
+	updatedOrder, err := c.svc.GetOrderByNo(ctx, order.OrderNo)
+	if err != nil {
+		return nil, err
+	}
+	return &v1.AdminOrderRefundRes{
+		RefundNo: accepted.RefundNo, ProviderID: accepted.ProviderRefundID,
+		Status: string(accepted.Status), OrderStatus: updatedOrder.Status,
+	}, nil
+}
+
+func recoveryRefundStatus(out *paykit.RefundOut) (paymentrecovery.RefundStatus, bool) {
+	if out == nil {
+		return "", false
+	}
+	switch out.Status {
+	case paykit.RefundStatusPending:
+		return paymentrecovery.RefundPending, true
+	case paykit.RefundStatusSucceeded:
+		return paymentrecovery.RefundSucceeded, true
+	case paykit.RefundStatusFailed:
+		return paymentrecovery.RefundFailed, true
+	case paykit.RefundStatusCancelled:
+		return paymentrecovery.RefundCancelled, true
+	case "":
+		if out.Success {
+			return paymentrecovery.RefundSucceeded, true
+		}
+	}
+	return "", false
 }
 
 func requireAdmin(ctx context.Context) error {

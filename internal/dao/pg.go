@@ -357,7 +357,7 @@ ON CONFLICT (sub, product_id) DO NOTHING`
 // EntitlementExists reports whether (sub, productID) has an entitlement row.
 func (r *PG) EntitlementExists(ctx context.Context, sub, productID string) (bool, error) {
 	n, err := r.db.Model("entitlements").Ctx(ctx).
-		Where("sub", sub).Where("product_id", productID).Count()
+		Where("sub", sub).Where("product_id", productID).Where("state", "active").Count()
 	if err != nil {
 		return false, err
 	}
@@ -843,10 +843,138 @@ func (r *PG) MarkOrderRefundedTx(ctx context.Context, tx gdb.TX, orderID, provid
 		"delivery_state": model.DeliveryStateRevoked,
 		"updated_at":     gtime.Now(),
 	}
-	if providerRefundID != "" {
-		data["provider_tx_id"] = providerRefundID
-	}
 	_, err := tx.Ctx(ctx).Model("orders").Where("id", orderID).Data(data).Update()
+	return err
+}
+
+func (r *PG) CreateRefundTx(
+	ctx context.Context,
+	tx gdb.TX,
+	refund *paymentrecovery.RefundRecord,
+) (*paymentrecovery.RefundRecord, bool, error) {
+	if refund.ID == "" {
+		refund.ID = uuid.NewString()
+	}
+	result, err := tx.Ctx(ctx).Exec(`
+INSERT INTO refunds (
+    id, order_id, payment_attempt_id, provider, merchant_account,
+    refund_no, idempotency_key, amount_cents, currency, reason,
+    status, requested_by
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (provider, merchant_account, idempotency_key) DO NOTHING`,
+		refund.ID, refund.OrderID, nullableString(refund.PaymentAttemptID),
+		refund.Provider, refund.Merchant, refund.RefundNo,
+		refund.IdempotencyKey, refund.AmountCents, refund.Currency,
+		refund.Reason, refund.Status, refund.RequestedBy,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return nil, false, err
+	}
+	var persisted *paymentrecovery.RefundRecord
+	err = tx.Ctx(ctx).Model("refunds").
+		Where("provider", refund.Provider).
+		Where("merchant_account", refund.Merchant).
+		Where("idempotency_key", refund.IdempotencyKey).
+		LockUpdate().
+		Limit(1).
+		Scan(&persisted)
+	return persisted, affected > 0, err
+}
+
+func (r *PG) RefundByNoTxForUpdate(
+	ctx context.Context,
+	tx gdb.TX,
+	refundNo string,
+) (*paymentrecovery.RefundRecord, error) {
+	var refund *paymentrecovery.RefundRecord
+	err := tx.Ctx(ctx).Model("refunds").
+		Where("refund_no", refundNo).
+		LockUpdate().
+		Limit(1).
+		Scan(&refund)
+	return refund, err
+}
+
+func (r *PG) UpdateRefundTx(
+	ctx context.Context,
+	tx gdb.TX,
+	refundID string,
+	refund paymentrecovery.Refund,
+) error {
+	data := g.Map{
+		"status":             refund.Status,
+		"provider_refund_id": refund.ProviderRefundID,
+		"revision":           refund.Revision,
+		"last_observed_at":   refund.LastObservedAt,
+		"updated_at":         gtime.Now(),
+	}
+	if refund.Status == paymentrecovery.RefundSucceeded {
+		data["completed_at"] = refund.LastObservedAt
+	}
+	_, err := tx.Ctx(ctx).Model("refunds").Where("id", refundID).Data(data).Update()
+	return err
+}
+
+func (r *PG) MarkRefundSubmitting(ctx context.Context, refundNo string) error {
+	_, err := r.db.Model("refunds").Ctx(ctx).
+		Where("refund_no", refundNo).
+		Where("status", paymentrecovery.RefundRequested).
+		Data(g.Map{
+			"status":     paymentrecovery.RefundSubmitting,
+			"revision":   gdb.Raw("revision + 1"),
+			"updated_at": gtime.Now(),
+		}).
+		Update()
+	return err
+}
+
+func (r *PG) RevokeEntitlementsByOrderIDTx(
+	ctx context.Context,
+	tx gdb.TX,
+	orderID, reason string,
+) (int64, error) {
+	result, err := tx.Ctx(ctx).Model("entitlements").
+		Where("order_id", orderID).
+		Where("state", "active").
+		Data(g.Map{
+			"state":          "revoked",
+			"revoked_at":     gtime.Now(),
+			"revoked_reason": strings.TrimSpace(reason),
+		}).
+		Update()
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (r *PG) ApplyRefundAmountTx(
+	ctx context.Context,
+	tx gdb.TX,
+	orderID string,
+	amountCents int,
+	full bool,
+) error {
+	if full {
+		_, err := tx.Ctx(ctx).Exec(`
+UPDATE orders
+SET refunded_amount_cents = refunded_amount_cents + ?,
+    status = ?,
+    delivery_state = ?,
+    updated_at = now()
+WHERE id = ?`, amountCents, model.OrderStatusRefunded, model.DeliveryStateRevoked, orderID)
+		return err
+	}
+	_, err := tx.Ctx(ctx).Exec(`
+UPDATE orders
+SET refunded_amount_cents = refunded_amount_cents + ?,
+    updated_at = now()
+WHERE id = ?`, amountCents, orderID)
 	return err
 }
 

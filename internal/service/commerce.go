@@ -21,6 +21,7 @@ import (
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/google/uuid"
 	"github.com/yueli-official/foundation/go/webhook"
 
 	"platform/services/commerce/internal/commerceerr"
@@ -102,6 +103,20 @@ type CheckoutGrantResult struct {
 type PaymentAcceptanceResult struct {
 	Processing paymentrecovery.ProcessingState
 	Grant      *CheckoutGrantResult
+}
+
+type RefundRequestInput struct {
+	OrderNo        string
+	AmountCents    int
+	Reason         string
+	RequestedBy    string
+	IdempotencyKey string
+}
+
+type RefundRequestResult struct {
+	Order     *model.Order
+	Refund    *paymentrecovery.RefundRecord
+	Duplicate bool
 }
 
 type DeliveryResult struct {
@@ -1549,6 +1564,192 @@ func (s *Service) MarkRefunded(ctx context.Context, orderNo, providerRefundID st
 		}
 		return s.publishOrderRefunded(ctx, tx, order, providerRefundID, time.Now().UTC())
 	})
+}
+
+func (s *Service) RequestRefund(
+	ctx context.Context,
+	input RefundRequestInput,
+) (*RefundRequestResult, error) {
+	input.OrderNo = strings.TrimSpace(input.OrderNo)
+	input.Reason = strings.TrimSpace(input.Reason)
+	input.RequestedBy = strings.TrimSpace(input.RequestedBy)
+	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
+	if input.IdempotencyKey == "" || input.RequestedBy == "" || input.Reason == "" {
+		return nil, commerceerr.InvalidRequest("idempotencyKey, requestedBy, and reason are required")
+	}
+	result := &RefundRequestResult{}
+	err := s.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		order, err := s.db.GetOrderByNoTxForUpdate(ctx, tx, input.OrderNo)
+		if err != nil {
+			return err
+		}
+		if order == nil {
+			return commerceerr.OrderNotFound(input.OrderNo)
+		}
+		if order.PaymentState != string(paymentrecovery.PaymentSettled) &&
+			order.Status != model.OrderStatusFulfilled &&
+			order.Status != model.OrderStatusPaid {
+			return commerceerr.OrderInvalidState(order.Status, model.OrderStatusFulfilled)
+		}
+		remaining := order.AmountCents - order.RefundedAmount
+		amount := input.AmountCents
+		if amount == 0 {
+			amount = remaining
+		}
+		if amount <= 0 || amount > remaining {
+			return commerceerr.InvalidRequest("refund amount exceeds refundable amount")
+		}
+		proposed := &paymentrecovery.RefundRecord{
+			OrderID: order.ID, Provider: order.PaymentProvider, Merchant: "primary",
+			RefundNo: "RF-" + uuid.NewString(), IdempotencyKey: input.IdempotencyKey,
+			AmountCents: amount, Currency: strings.ToUpper(order.Currency),
+			Reason: input.Reason, Status: paymentrecovery.RefundRequested,
+			RequestedBy: input.RequestedBy,
+		}
+		persisted, created, err := s.db.CreateRefundTx(ctx, tx, proposed)
+		if err != nil {
+			return err
+		}
+		if persisted == nil {
+			return fmt.Errorf("refund reservation returned no row")
+		}
+		if !created && (persisted.OrderID != proposed.OrderID ||
+			persisted.AmountCents != proposed.AmountCents ||
+			persisted.Currency != proposed.Currency ||
+			persisted.Reason != proposed.Reason) {
+			return paymentrecovery.ErrBindingConflict
+		}
+		result.Order = order
+		result.Refund = persisted
+		result.Duplicate = !created
+		return nil
+	})
+	return result, err
+}
+
+func (s *Service) MarkRefundSubmitting(ctx context.Context, refundNo string) error {
+	return s.db.MarkRefundSubmitting(ctx, refundNo)
+}
+
+func (s *Service) AcceptRefundObservation(
+	ctx context.Context,
+	observation paymentrecovery.RefundObservation,
+	providerStatus string,
+) (*paymentrecovery.RefundRecord, error) {
+	event, err := paymentrecovery.NewRefundEvent(observation, providerStatus)
+	if err != nil {
+		return nil, err
+	}
+	var accepted *paymentrecovery.RefundRecord
+	err = s.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		persistedEvent, inserted, err := s.db.ReserveProviderEventTx(ctx, tx, &event)
+		if err != nil {
+			return err
+		}
+		if persistedEvent == nil {
+			return fmt.Errorf("refund event reservation returned no row")
+		}
+		if !inserted {
+			if !event.SameEvidence(*persistedEvent) {
+				return paymentrecovery.ErrEventConflict
+			}
+			if persistedEvent.Processing == paymentrecovery.ProcessingApplied ||
+				persistedEvent.Processing == paymentrecovery.ProcessingIgnored ||
+				persistedEvent.Processing == paymentrecovery.ProcessingConflict {
+				refund, err := s.db.RefundByNoTxForUpdate(ctx, tx, observation.RefundNo)
+				accepted = refund
+				return err
+			}
+			event.ID = persistedEvent.ID
+		}
+		refundRow, err := s.db.RefundByNoTxForUpdate(ctx, tx, observation.RefundNo)
+		if err != nil {
+			return err
+		}
+		if refundRow == nil {
+			return commerceerr.InvalidRequest("refund not found")
+		}
+		order, err := s.db.GetOrderByNoTxForUpdate(ctx, tx, observation.OrderNo)
+		if err != nil {
+			return err
+		}
+		if order == nil || order.ID != refundRow.OrderID {
+			return commerceerr.InvalidRequest("refund order binding mismatch")
+		}
+		current := paymentrecovery.Refund{
+			Status: refundRow.Status, Provider: refundRow.Provider,
+			Merchant: refundRow.Merchant, OrderNo: order.OrderNo,
+			RefundNo: refundRow.RefundNo, ProviderRefundID: refundRow.ProviderRefundID,
+			Money: paymentrecovery.Money{
+				AmountCents: refundRow.AmountCents, Currency: refundRow.Currency,
+			},
+			Revision: refundRow.Revision,
+		}
+		if refundRow.LastObservedAt != nil {
+			current.LastObservedAt = *refundRow.LastObservedAt
+		}
+		next, changed, applyErr := paymentrecovery.ApplyRefund(current, observation)
+		if applyErr != nil {
+			if err := s.db.FinalizeProviderEventTx(
+				ctx, tx, event.ID, order.ID, "", paymentrecovery.ProcessingConflict,
+				applyErr.Error(),
+			); err != nil {
+				return err
+			}
+			accepted = refundRow
+			return nil
+		}
+		if !changed {
+			if err := s.db.FinalizeProviderEventTx(
+				ctx, tx, event.ID, order.ID, "", paymentrecovery.ProcessingIgnored, "",
+			); err != nil {
+				return err
+			}
+			accepted = refundRow
+			return nil
+		}
+		if err := s.db.UpdateRefundTx(ctx, tx, refundRow.ID, next); err != nil {
+			return err
+		}
+		refundRow.Status = next.Status
+		refundRow.ProviderRefundID = next.ProviderRefundID
+		refundRow.Revision = next.Revision
+		if observation.Status == paymentrecovery.RefundSucceeded {
+			totalRefunded := order.RefundedAmount + refundRow.AmountCents
+			if totalRefunded > order.AmountCents {
+				return commerceerr.InvalidRequest("refund total exceeds order amount")
+			}
+			full := totalRefunded == order.AmountCents
+			if err := s.db.ApplyRefundAmountTx(
+				ctx, tx, order.ID, refundRow.AmountCents, full,
+			); err != nil {
+				return err
+			}
+			if full {
+				if _, err := s.db.RevokeDeliveryGrantsByOrderIDTx(ctx, tx, order.ID); err != nil {
+					return err
+				}
+				if _, err := s.db.RevokeEntitlementsByOrderIDTx(
+					ctx, tx, order.ID, "order fully refunded",
+				); err != nil {
+					return err
+				}
+				if err := s.publishOrderRefunded(
+					ctx, tx, order, next.ProviderRefundID, observation.OccurredAt,
+				); err != nil {
+					return err
+				}
+			}
+		}
+		if err := s.db.FinalizeProviderEventTx(
+			ctx, tx, event.ID, order.ID, "", paymentrecovery.ProcessingApplied, "",
+		); err != nil {
+			return err
+		}
+		accepted = refundRow
+		return nil
+	})
+	return accepted, err
 }
 
 func (s *Service) publishOrderRefunded(

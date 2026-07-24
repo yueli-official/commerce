@@ -299,7 +299,7 @@ func validateRefundObservation(observation RefundObservation) error {
 		return ErrInvalidEvidence
 	}
 	switch observation.Status {
-	case RefundPending, RefundSucceeded, RefundFailed:
+	case RefundPending, RefundSucceeded, RefundFailed, RefundCancelled:
 		return nil
 	default:
 		return ErrInvalidEvidence
@@ -327,9 +327,9 @@ func refundTransitionAllowed(from RefundStatus, to RefundStatus) bool {
 		return to == RefundSubmitting || to == RefundPending ||
 			to == RefundSucceeded || to == RefundFailed || to == RefundCancelled
 	case RefundSubmitting:
-		return to == RefundPending || to == RefundSucceeded || to == RefundFailed
+		return to == RefundPending || to == RefundSucceeded || to == RefundFailed || to == RefundCancelled
 	case RefundPending:
-		return to == RefundSucceeded || to == RefundFailed
+		return to == RefundSucceeded || to == RefundFailed || to == RefundCancelled
 	default:
 		return false
 	}

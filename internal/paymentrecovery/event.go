@@ -80,6 +80,27 @@ type DuePaymentAttempt struct {
 	NextReconcileAt time.Time `orm:"next_reconcile_at"`
 }
 
+type RefundRecord struct {
+	ID               string       `orm:"id"`
+	OrderID          string       `orm:"order_id"`
+	PaymentAttemptID string       `orm:"payment_attempt_id"`
+	Provider         string       `orm:"provider"`
+	Merchant         string       `orm:"merchant_account"`
+	RefundNo         string       `orm:"refund_no"`
+	IdempotencyKey   string       `orm:"idempotency_key"`
+	ProviderRefundID string       `orm:"provider_refund_id"`
+	AmountCents      int          `orm:"amount_cents"`
+	Currency         string       `orm:"currency"`
+	Reason           string       `orm:"reason"`
+	Status           RefundStatus `orm:"status"`
+	RequestedBy      string       `orm:"requested_by"`
+	Revision         uint64       `orm:"revision"`
+	LastObservedAt   *time.Time   `orm:"last_observed_at"`
+	CompletedAt      *time.Time   `orm:"completed_at"`
+	CreatedAt        time.Time    `orm:"created_at"`
+	UpdatedAt        time.Time    `orm:"updated_at"`
+}
+
 func DigestPayload(payload []byte) string {
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])
@@ -99,6 +120,28 @@ func NewPaymentEvent(observation PaymentObservation, providerEventID, providerSt
 		ProviderStatus:   strings.TrimSpace(providerStatus),
 		NormalizedStatus: string(observation.Status),
 		OrderNo:          observation.OrderNo, ProviderObjectID: observation.ProviderTxID,
+		AmountCents: observation.Money.AmountCents, Currency: observation.Money.Currency,
+		OccurredAt: &observation.OccurredAt, Processing: ProcessingReceived,
+	}
+	if event.ProviderStatus == "" {
+		event.ProviderStatus = event.NormalizedStatus
+	}
+	return event, nil
+}
+
+func NewRefundEvent(observation RefundObservation, providerStatus string) (ProviderEvent, error) {
+	observation = normalizeRefundObservation(observation)
+	if err := validateRefundObservation(observation); err != nil {
+		return ProviderEvent{}, err
+	}
+	event := ProviderEvent{
+		Provider: observation.Provider, Merchant: observation.Merchant,
+		Source: observation.Source, Operation: OperationRefund,
+		IdempotencyKey:   observation.IdempotencyKey,
+		PayloadDigest:    observation.PayloadDigest,
+		ProviderStatus:   strings.TrimSpace(providerStatus),
+		NormalizedStatus: string(observation.Status),
+		OrderNo:          observation.OrderNo, ProviderObjectID: observation.ProviderRefundID,
 		AmountCents: observation.Money.AmountCents, Currency: observation.Money.Currency,
 		OccurredAt: &observation.OccurredAt, Processing: ProcessingReceived,
 	}

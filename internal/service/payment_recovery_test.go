@@ -167,3 +167,133 @@ func TestPaymentObservationConcurrentReplayGrantsOnce(t *testing.T) {
 		t.Fatalf("delivery grants = %d err=%v", len(grants), err)
 	}
 }
+
+func TestFullRefundRevokesEntitlementWithoutOverwritingPaymentID(t *testing.T) {
+	svc, pg, ctx := newSvc(t)
+	order, err := svc.CreateCheckout(ctx, service.CheckoutDesc{
+		BuyerSub: "refund-user", Provider: "alipay",
+		Items: []service.CheckoutItemDesc{{
+			SiteKey: "shop", ExternalID: uid("refund-product"),
+			VariantID: uid("refund-variant"), Title: "Refund Product",
+			PriceCents: 900, Currency: "CNY", DeliveryKind: "asset_file",
+			DeliveryRef: "asset-refund", Quantity: 1,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SettleCheckout(
+		ctx, order.OrderNo, "alipay", "ALI-PAYMENT-TX", order.AmountCents,
+	); err != nil {
+		t.Fatal(err)
+	}
+	reserved, err := svc.RequestRefund(ctx, service.RefundRequestInput{
+		OrderNo: order.OrderNo, Reason: "customer request",
+		RequestedBy: "admin-1", IdempotencyKey: "refund-idem-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate, err := svc.RequestRefund(ctx, service.RefundRequestInput{
+		OrderNo: order.OrderNo, Reason: "customer request",
+		RequestedBy: "admin-1", IdempotencyKey: "refund-idem-1",
+	})
+	if err != nil || !duplicate.Duplicate || duplicate.Refund.ID != reserved.Refund.ID {
+		t.Fatalf("duplicate = %+v err=%v", duplicate, err)
+	}
+	if err := svc.MarkRefundSubmitting(ctx, reserved.Refund.RefundNo); err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := svc.AcceptRefundObservation(ctx, paymentrecovery.RefundObservation{
+		Status: paymentrecovery.RefundSucceeded, Provider: "alipay", Merchant: "primary",
+		OrderNo: order.OrderNo, RefundNo: reserved.Refund.RefundNo,
+		ProviderRefundID: "ALI-REFUND-1",
+		Money: paymentrecovery.Money{
+			AmountCents: order.AmountCents, Currency: order.Currency,
+		},
+		Source: paymentrecovery.SourceMutation, Authoritative: true,
+		IdempotencyKey: "refund-result-1",
+		PayloadDigest:  paymentrecovery.DigestPayload([]byte("refund-success")),
+		OccurredAt:     time.Now().UTC(),
+	}, "SUCCESS")
+	if err != nil || accepted.Status != paymentrecovery.RefundSucceeded {
+		t.Fatalf("accepted = %+v err=%v", accepted, err)
+	}
+	refunded, err := svc.GetOrderByNo(ctx, order.OrderNo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refunded.Status != model.OrderStatusRefunded ||
+		refunded.RefundedAmount != order.AmountCents ||
+		refunded.ProviderTxID != "ALI-PAYMENT-TX" {
+		t.Fatalf("refunded order = %+v", refunded)
+	}
+	items, err := svc.OrderItems(ctx, order.ID)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items = %+v err=%v", items, err)
+	}
+	entitled, err := pg.EntitlementExists(ctx, "refund-user", items[0].ProductID)
+	if err != nil || entitled {
+		t.Fatalf("active entitlement = %v err=%v", entitled, err)
+	}
+	grants, err := pg.DeliveryGrantsByOrderID(ctx, order.ID)
+	if err != nil || len(grants) != 1 || grants[0].State != "revoked" {
+		t.Fatalf("grants = %+v err=%v", grants, err)
+	}
+}
+
+func TestPartialRefundKeepsDeliveryActive(t *testing.T) {
+	svc, pg, ctx := newSvc(t)
+	order, err := svc.CreateCheckout(ctx, service.CheckoutDesc{
+		BuyerSub: "partial-user", Provider: "alipay",
+		Items: []service.CheckoutItemDesc{{
+			SiteKey: "shop", ExternalID: uid("partial-product"),
+			VariantID: uid("partial-variant"), Title: "Partial Product",
+			PriceCents: 800, Currency: "CNY", DeliveryKind: "asset_file",
+			DeliveryRef: "asset-partial", Quantity: 1,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SettleCheckout(
+		ctx, order.OrderNo, "alipay", "ALI-PARTIAL-TX", order.AmountCents,
+	); err != nil {
+		t.Fatal(err)
+	}
+	amount := order.AmountCents / 2
+	reserved, err := svc.RequestRefund(ctx, service.RefundRequestInput{
+		OrderNo: order.OrderNo, AmountCents: amount, Reason: "goodwill",
+		RequestedBy: "admin-1", IdempotencyKey: "partial-idem-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.MarkRefundSubmitting(ctx, reserved.Refund.RefundNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AcceptRefundObservation(ctx, paymentrecovery.RefundObservation{
+		Status: paymentrecovery.RefundSucceeded, Provider: "alipay", Merchant: "primary",
+		OrderNo: order.OrderNo, RefundNo: reserved.Refund.RefundNo,
+		ProviderRefundID: "ALI-PARTIAL-REFUND",
+		Money:            paymentrecovery.Money{AmountCents: amount, Currency: order.Currency},
+		Source:           paymentrecovery.SourceMutation, Authoritative: true,
+		IdempotencyKey: "partial-result-1",
+		PayloadDigest:  paymentrecovery.DigestPayload([]byte("partial-success")),
+		OccurredAt:     time.Now().UTC(),
+	}, "SUCCESS"); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := svc.GetOrderByNo(ctx, order.OrderNo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != model.OrderStatusFulfilled || updated.RefundedAmount != amount {
+		t.Fatalf("partial order = %+v", updated)
+	}
+	items, _ := svc.OrderItems(ctx, order.ID)
+	entitled, err := pg.EntitlementExists(ctx, "partial-user", items[0].ProductID)
+	if err != nil || !entitled {
+		t.Fatalf("active entitlement = %v err=%v", entitled, err)
+	}
+}

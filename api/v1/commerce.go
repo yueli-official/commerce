@@ -344,14 +344,18 @@ type AdminOrderDeliveryGrantRes struct {
 }
 
 type AdminOrderRefundReq struct {
-	g.Meta  `path:"/api/v1/admin/commerce/orders/{orderNo}/refund" method:"POST" tags:"Admin Commerce" summary:"Refund an order through its payment provider"`
-	OrderNo string `p:"orderNo" v:"required"`
-	Reason  string `json:"reason"`
+	g.Meta         `path:"/api/v1/admin/commerce/orders/{orderNo}/refund" method:"POST" tags:"Admin Commerce" summary:"Refund an order through its payment provider"`
+	OrderNo        string `p:"orderNo" v:"required"`
+	AmountCents    int    `json:"amountCents"`
+	Reason         string `json:"reason" v:"required"`
+	IdempotencyKey string `json:"idempotencyKey" v:"required"`
 }
 
 type AdminOrderRefundRes struct {
-	ProviderID string `json:"providerId"`
-	Status     string `json:"status"`
+	RefundNo    string `json:"refundNo"`
+	ProviderID  string `json:"providerId,omitempty"`
+	Status      string `json:"status"`
+	OrderStatus string `json:"orderStatus"`
 }
 
 // ─── GET /api/v1/access ─────────────────────────────────────────────────────
