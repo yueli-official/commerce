@@ -37,6 +37,7 @@ type Deps struct {
 	CapabilityScope      string
 	CapabilityProbeScope string
 	CapabilityService    capability.ServiceMetadata
+	Webhooks             service.TransactionalWebhookPublisher
 }
 
 // Configure mounts the commerce-service routes onto s.
@@ -57,6 +58,7 @@ func Configure(s *ghttp.Server, d Deps) {
 		service.WithAssetDeliveryClient(d.Asset),
 		service.WithCurrentDeliveryResolver(d.CurrentDelivery),
 		service.WithCurrentCheckoutItemResolver(currentCheckout),
+		service.WithWebhookPublisher(d.Webhooks),
 	)
 
 	// ── Public: liveness ────────────────────────────────────────────────────

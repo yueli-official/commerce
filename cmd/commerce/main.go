@@ -2,8 +2,11 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -14,13 +17,17 @@ import (
 	"platform/gokit/authsetup"
 	"platform/gokit/observability"
 	"platform/gokit/openapiexport"
+	"platform/gokit/postgresdb"
+	"platform/gokit/webhooksetup"
 	"platform/paykit"
 	payalipay "platform/paykit/providers/alipay"
 	paypal "platform/paykit/providers/paypal"
 	wechat "platform/paykit/providers/wechat"
 	"platform/services/commerce/internal/appconfig"
+	"platform/services/commerce/internal/commercewebhook"
 	"platform/services/commerce/internal/dao"
 	"platform/services/commerce/internal/server"
+	commerceservice "platform/services/commerce/internal/service"
 )
 
 func main() {
@@ -74,7 +81,47 @@ func main() {
 	}
 
 	db := dao.NewPG(g.DB())
+	var webhookRuntime *webhooksetup.Runtime
+	if g.Cfg().MustGet(ctx, "commerce.webhook.enabled").Bool() {
+		masterKey, err := webhooksetup.DecodeMasterKey(
+			g.Cfg().MustGet(ctx, "commerce.webhook.masterKey").String(),
+		)
+		if err != nil {
+			panic(err)
+		}
+		webhookDB, err := postgresdb.OpenDefault(ctx)
+		if err != nil {
+			panic(err)
+		}
+		defer webhookDB.Close()
+		workerID := "commerce-webhook-worker"
+		if hostname, hostErr := os.Hostname(); hostErr == nil && hostname != "" {
+			workerID += ":" + hostname
+		}
+		webhookRuntime, err = webhooksetup.New(ctx, webhooksetup.Options{
+			DB: webhookDB, InstanceKey: "commerce:default",
+			Definition: commercewebhook.Definition("default"),
+			MasterKey:  masterKey, WorkerID: workerID,
+			OnError: func(runErr error) {
+				g.Log().Warning(ctx, "commerce webhook runner error", "error", runErr)
+			},
+		})
+		if err != nil {
+			panic(err)
+		}
+		workerContext, stopWorker := context.WithCancel(context.Background())
+		defer stopWorker()
+		go func() {
+			if runErr := webhookRuntime.Runner.Run(workerContext); runErr != nil && !errors.Is(runErr, context.Canceled) {
+				g.Log().Error(ctx, "commerce webhook runner stopped", "error", runErr)
+			}
+		}()
+	}
 	s := g.Server()
+	var webhookPublisher commerceservice.TransactionalWebhookPublisher
+	if webhookRuntime != nil {
+		webhookPublisher = webhookRuntime.Hooks
+	}
 	server.Configure(s, server.Deps{
 		Verifier:             verifier,
 		DB:                   db,
@@ -92,6 +139,7 @@ func main() {
 		CapabilityScope:      appconfig.CapabilityScope(ctx),
 		CapabilityProbeScope: appconfig.CapabilityProbeScope(ctx),
 		CapabilityService:    appconfig.CapabilityServiceMetadata(),
+		Webhooks:             webhookPublisher,
 	})
 	if handled, err := openapiexport.ExportIfRequested(s); handled {
 		if err != nil {

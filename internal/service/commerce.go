@@ -7,6 +7,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -20,8 +21,10 @@ import (
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/yueli-official/foundation/go/webhook"
 
 	"platform/services/commerce/internal/commerceerr"
+	"platform/services/commerce/internal/commercewebhook"
 	"platform/services/commerce/internal/dao"
 	"platform/services/commerce/internal/model"
 )
@@ -238,6 +241,10 @@ var paymentMethodOrder = []string{"alipay", "wechat", "paypal"}
 
 type Option func(*Service)
 
+type TransactionalWebhookPublisher interface {
+	PublishTx(context.Context, *sql.Tx, webhook.EventCommand) (webhook.EventReceipt, error)
+}
+
 func WithDeliveryConfig(cfg DeliveryConfig) Option {
 	return func(s *Service) {
 		s.ConfigureDelivery(cfg)
@@ -268,6 +275,12 @@ func WithCurrentCheckoutItemResolver(resolver CurrentCheckoutItemResolver) Optio
 	}
 }
 
+func WithWebhookPublisher(publisher TransactionalWebhookPublisher) Option {
+	return func(service *Service) {
+		service.webhooks = publisher
+	}
+}
+
 // Service holds the DAO and implements the commerce domain logic.
 type Service struct {
 	db              *dao.PG
@@ -277,6 +290,7 @@ type Service struct {
 	assetDelivery   AssetDeliveryClient
 	currentDelivery CurrentDeliveryResolver
 	currentCheckout CurrentCheckoutItemResolver
+	webhooks        TransactionalWebhookPublisher
 }
 
 // New constructs a Service.
@@ -568,11 +582,14 @@ func (s *Service) RedeemCheckout(ctx context.Context, desc CheckoutDesc) (*Point
 		}); err != nil {
 			return err
 		}
-		return s.db.InsertDeliveryGrantTx(ctx, tx, &model.DeliveryGrant{
+		if err := s.db.InsertDeliveryGrantTx(ctx, tx, &model.DeliveryGrant{
 			OrderID: o.ID, OrderItemID: first.ID, BuyerSub: o.BuyerSub, BuyerEmail: o.BuyerEmail,
 			TokenHash: tokenHash, DeliveryRef: first.DeliveryRefSnapshot, State: "active",
 			ExpiresAt: grantAccess.ExpiresAt, MaxDownloads: grantAccess.MaxDownloads,
-		})
+		}); err != nil {
+			return err
+		}
+		return s.publishOrderFulfilled(ctx, tx, o, model.ProductKindPoints, now.Time)
 	})
 	if err != nil {
 		return nil, err
@@ -678,11 +695,14 @@ func (s *Service) ClaimFreeCheckout(ctx context.Context, desc CheckoutDesc) (*Fr
 				}
 			}
 		}
-		return s.db.InsertDeliveryGrantTx(ctx, tx, &model.DeliveryGrant{
+		if err := s.db.InsertDeliveryGrantTx(ctx, tx, &model.DeliveryGrant{
 			OrderID: o.ID, OrderItemID: first.ID, BuyerSub: o.BuyerSub, BuyerEmail: o.BuyerEmail,
 			TokenHash: tokenHash, DeliveryRef: first.DeliveryRefSnapshot, State: "active",
 			ExpiresAt: grantAccess.ExpiresAt, MaxDownloads: grantAccess.MaxDownloads,
-		})
+		}); err != nil {
+			return err
+		}
+		return s.publishOrderFulfilled(ctx, tx, o, model.ProductKindFree, now.Time)
 	})
 	if err != nil {
 		return nil, err
@@ -835,11 +855,14 @@ func (s *Service) SettleCheckout(ctx context.Context, orderNo, provider, provide
 				}
 			}
 		}
-		return s.db.InsertDeliveryGrantTx(ctx, tx, &model.DeliveryGrant{
+		if err := s.db.InsertDeliveryGrantTx(ctx, tx, &model.DeliveryGrant{
 			OrderID: o.ID, OrderItemID: first.ID, BuyerSub: o.BuyerSub, BuyerEmail: o.BuyerEmail,
 			TokenHash: tokenHash, DeliveryRef: first.DeliveryRefSnapshot, State: "active",
 			ExpiresAt: grantAccess.ExpiresAt, MaxDownloads: grantAccess.MaxDownloads,
-		})
+		}); err != nil {
+			return err
+		}
+		return s.publishOrderFulfilled(ctx, tx, o, defaultString(provider, o.PaymentProvider), now.Time)
 	})
 	if err != nil {
 		return nil, err
@@ -849,6 +872,36 @@ func (s *Service) SettleCheckout(ctx context.Context, orderNo, provider, provide
 	}
 	s.sendDeliveryMail(ctx, o, first, rawToken)
 	return &CheckoutGrantResult{Token: rawToken, State: model.DeliveryStateGranted, DeliveryRef: first.DeliveryRefSnapshot}, nil
+}
+
+func (s *Service) publishOrderFulfilled(
+	ctx context.Context,
+	tx gdb.TX,
+	order *model.Order,
+	provider string,
+	occurredAt time.Time,
+) error {
+	if s.webhooks == nil {
+		return nil
+	}
+	payload, err := json.Marshal(struct {
+		OrderID     string `json:"orderId"`
+		Currency    string `json:"currency"`
+		AmountCents int    `json:"amountCents"`
+		Provider    string `json:"provider"`
+	}{
+		OrderID: order.ID, Currency: order.Currency, AmountCents: order.AmountCents,
+		Provider: strings.TrimSpace(provider),
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.webhooks.PublishTx(ctx, tx.GetSqlTX(), webhook.EventCommand{
+		Type: commercewebhook.OrderFulfilled, Subject: "order/" + order.ID,
+		Data: payload, OccurredAt: occurredAt,
+		IdempotencyKey: "commerce:order:" + order.ID + ":fulfilled:v1",
+	})
+	return err
 }
 
 func (s *Service) SetCheckoutPaymentSession(ctx context.Context, orderNo, sessionID string) error {
@@ -1250,11 +1303,46 @@ func (s *Service) MarkRefunded(ctx context.Context, orderNo, providerRefundID st
 		if err := s.db.MarkOrderRefundedTx(ctx, tx, order.ID, providerRefundID); err != nil {
 			return err
 		}
-		return s.db.InsertPaymentEventTx(ctx, tx, &model.PaymentEvent{
+		if err := s.db.InsertPaymentEventTx(ctx, tx, &model.PaymentEvent{
 			OrderID: order.ID, Provider: defaultString(order.PaymentProvider, "admin"), EventType: "refund",
 			ProviderEventID: providerRefundID, AmountCents: order.AmountCents, Success: true, Message: "order refunded",
-		})
+		}); err != nil {
+			return err
+		}
+		return s.publishOrderRefunded(ctx, tx, order, providerRefundID, time.Now().UTC())
 	})
+}
+
+func (s *Service) publishOrderRefunded(
+	ctx context.Context,
+	tx gdb.TX,
+	order *model.Order,
+	providerRefundID string,
+	occurredAt time.Time,
+) error {
+	if s.webhooks == nil {
+		return nil
+	}
+	payload, err := json.Marshal(struct {
+		OrderID          string `json:"orderId"`
+		Currency         string `json:"currency"`
+		AmountCents      int    `json:"amountCents"`
+		Provider         string `json:"provider"`
+		ProviderRefundID string `json:"providerRefundId,omitempty"`
+	}{
+		OrderID: order.ID, Currency: order.Currency, AmountCents: order.AmountCents,
+		Provider:         defaultString(order.PaymentProvider, "admin"),
+		ProviderRefundID: strings.TrimSpace(providerRefundID),
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.webhooks.PublishTx(ctx, tx.GetSqlTX(), webhook.EventCommand{
+		Type: commercewebhook.OrderRefunded, Subject: "order/" + order.ID,
+		Data: payload, OccurredAt: occurredAt,
+		IdempotencyKey: "commerce:order:" + order.ID + ":refunded:v1",
+	})
+	return err
 }
 
 func (s *Service) createManualDeliveryGrant(ctx context.Context, orderNo string, sendMail bool) (*CheckoutGrantResult, error) {

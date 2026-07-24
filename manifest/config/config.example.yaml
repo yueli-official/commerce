@@ -81,6 +81,13 @@ commerce:
     client_secret: ""
     scope: "notification:send"
 
+  webhook:
+    # Enables durable outbound Commerce facts. Apply 0007/0008 migrations first.
+    enabled: false
+    # Exactly 32 random bytes encoded as base64 or 64 hex characters.
+    # Keep the real key in the deployment secret manager.
+    masterKey: ""
+
   alipay:
     app_id: ""
     private_key: ""
