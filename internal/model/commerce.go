@@ -110,6 +110,9 @@ type Order struct {
 	PaymentProvider  string     `json:"paymentProvider"   orm:"payment_provider"`
 	PaymentSessionID string     `json:"paymentSessionId"  orm:"payment_session_id"`
 	PaymentExpiresAt *time.Time `json:"paymentExpiresAt"  orm:"payment_expires_at"`
+	PaymentState     string     `json:"paymentState"      orm:"payment_state"`
+	RefundedAmount   int        `json:"refundedAmountCents" orm:"refunded_amount_cents"`
+	DisputeState     string     `json:"disputeState"      orm:"dispute_state"`
 	ReturnURL        string     `json:"returnUrl"         orm:"return_url"`
 	CancelURL        string     `json:"cancelUrl"         orm:"cancel_url"`
 	FulfilledAt      *time.Time `json:"fulfilledAt"       orm:"fulfilled_at"`

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/lib/pq"
-	_ "github.com/lib/pq"
 )
 
 func TestPaymentRecoveryMigrationLifecycle(t *testing.T) {
@@ -52,24 +51,33 @@ func TestPaymentRecoveryMigrationLifecycle(t *testing.T) {
 		}
 	}
 	assertRecoveryShape(t, database, true)
+	assertReconciliationShape(t, database, true)
 
-	down, err := os.ReadFile(filepath.Join("..", "..", "manifest", "sql", "migrations", "0009_payment_recovery.down.sql"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.Exec(string(down)); err != nil {
-		t.Fatalf("down 0009: %v", err)
-	}
+	applyMigration(
+		t, database, "0010_payment_reconciliation.down.sql", "down 0010",
+	)
+	assertReconciliationShape(t, database, false)
+	applyMigration(
+		t, database, "0010_payment_reconciliation.up.sql", "reapply 0010",
+	)
+	assertReconciliationShape(t, database, true)
+
+	applyMigration(t, database, "0009_payment_recovery.down.sql", "down 0009")
 	assertRecoveryShape(t, database, false)
 
-	up, err := os.ReadFile(filepath.Join("..", "..", "manifest", "sql", "migrations", "0009_payment_recovery.up.sql"))
+	applyMigration(t, database, "0009_payment_recovery.up.sql", "reapply 0009")
+	assertRecoveryShape(t, database, true)
+}
+
+func applyMigration(t *testing.T, database *sql.DB, name, action string) {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("..", "..", "manifest", "sql", "migrations", name))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(string(up)); err != nil {
-		t.Fatalf("reapply 0009: %v", err)
+	if _, err := database.Exec(string(body)); err != nil {
+		t.Fatalf("%s: %v", action, err)
 	}
-	assertRecoveryShape(t, database, true)
 }
 
 func assertRecoveryShape(t *testing.T, database *sql.DB, want bool) {
@@ -98,6 +106,28 @@ SELECT EXISTS (
 		}
 		if exists != want {
 			t.Fatalf("orders.%s exists=%v, want %v", column, exists, want)
+		}
+	}
+}
+
+func assertReconciliationShape(t *testing.T, database *sql.DB, want bool) {
+	t.Helper()
+	for _, column := range []string{
+		"last_reconciled_at", "next_reconcile_at",
+		"reconciliation_failures", "reconciliation_error",
+	} {
+		var exists bool
+		if err := database.QueryRow(`
+SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'payment_attempts'
+      AND column_name = $1
+)`, column).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if exists != want {
+			t.Fatalf("payment_attempts.%s exists=%v, want %v", column, exists, want)
 		}
 	}
 }

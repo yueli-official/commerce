@@ -966,12 +966,26 @@ func (s *Service) AcceptPaymentObservation(
 		next, changed, applyErr := paymentrecovery.ApplyPayment(current, observation)
 		if applyErr != nil {
 			result.Processing = paymentrecovery.ProcessingConflict
+			if observation.Source == paymentrecovery.SourceQuery {
+				if err := s.db.RecordPaymentReconciledTx(
+					ctx, tx, attempt.ID, current.Status, observation.OccurredAt,
+				); err != nil {
+					return err
+				}
+			}
 			return s.db.FinalizeProviderEventTx(
 				ctx, tx, event.ID, order.ID, attempt.ID, result.Processing, applyErr.Error(),
 			)
 		}
 		if !changed {
 			result.Processing = paymentrecovery.ProcessingIgnored
+			if observation.Source == paymentrecovery.SourceQuery {
+				if err := s.db.RecordPaymentReconciledTx(
+					ctx, tx, attempt.ID, current.Status, observation.OccurredAt,
+				); err != nil {
+					return err
+				}
+			}
 			return s.db.FinalizeProviderEventTx(
 				ctx, tx, event.ID, order.ID, attempt.ID, result.Processing, "",
 			)
@@ -995,6 +1009,13 @@ func (s *Service) AcceptPaymentObservation(
 		}
 		if err := s.db.UpdateOrderPaymentStateTx(ctx, tx, order.ID, next.Status); err != nil {
 			return err
+		}
+		if observation.Source == paymentrecovery.SourceQuery {
+			if err := s.db.RecordPaymentReconciledTx(
+				ctx, tx, attempt.ID, next.Status, observation.OccurredAt,
+			); err != nil {
+				return err
+			}
 		}
 
 		if observation.Status == paymentrecovery.PaymentSettled {
@@ -1102,7 +1123,37 @@ func (s *Service) SetCheckoutPaymentSession(ctx context.Context, orderNo, sessio
 	if o.Status != model.OrderStatusPaying {
 		return commerceerr.OrderInvalidState(o.Status, model.OrderStatusPaying)
 	}
-	return s.db.UpdatePaymentSession(ctx, o.ID, sessionID)
+	return s.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		if err := s.db.UpdatePaymentSessionTx(ctx, tx, o.ID, sessionID); err != nil {
+			return err
+		}
+		return s.db.UpdatePaymentAttemptSessionTx(
+			ctx, tx, o.ID, o.PaymentProvider, "primary", sessionID,
+		)
+	})
+}
+
+func (s *Service) PreparePaymentAttempt(
+	ctx context.Context,
+	orderNo, provider, merchant string,
+) error {
+	return s.db.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		order, err := s.db.GetOrderByNoTxForUpdate(ctx, tx, orderNo)
+		if err != nil {
+			return err
+		}
+		if order == nil {
+			return commerceerr.OrderNotFound(orderNo)
+		}
+		if order.Status != model.OrderStatusPaying {
+			return commerceerr.OrderInvalidState(order.Status, model.OrderStatusPaying)
+		}
+		if order.PaymentProvider != "" && order.PaymentProvider != provider {
+			return commerceerr.InvalidRequest("payment provider mismatch")
+		}
+		_, err = s.db.EnsurePaymentAttemptTx(ctx, tx, order, provider, merchant)
+		return err
+	})
 }
 
 func (s *Service) RecordPaymentFailure(ctx context.Context, orderNo, provider, eventType, providerEventID string, amountCents int, message string) error {

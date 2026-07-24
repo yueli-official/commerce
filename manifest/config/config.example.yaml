@@ -88,6 +88,11 @@ commerce:
     # Keep the real key in the deployment secret manager.
     masterKey: ""
 
+  worker:
+    enabled: true
+    id: ""
+    pollInterval: "2s"
+
   alipay:
     app_id: ""
     private_key: ""

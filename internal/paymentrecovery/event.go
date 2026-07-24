@@ -73,6 +73,13 @@ type PaymentAttemptRecord struct {
 	UpdatedAt         time.Time     `orm:"updated_at"`
 }
 
+type DuePaymentAttempt struct {
+	ID              string    `orm:"id"`
+	OrderNo         string    `orm:"order_no"`
+	Provider        string    `orm:"provider"`
+	NextReconcileAt time.Time `orm:"next_reconcile_at"`
+}
+
 func DigestPayload(payload []byte) string {
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])

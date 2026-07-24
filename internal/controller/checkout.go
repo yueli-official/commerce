@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -13,6 +14,7 @@ import (
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/model"
+	"platform/services/commerce/internal/paymentreconcile"
 	"platform/services/commerce/internal/service"
 	"platform/services/commerce/internal/sitecontext"
 )
@@ -23,14 +25,38 @@ type Checkout struct {
 	notifyURL string
 	returnURL string
 	sites     *sitecontext.Resolver
+	reconcile *paymentreconcile.Reconciler
 }
 
 func NewCheckout(svc *service.Service, reg paykit.Registry, notifyURL, returnURL string, sites ...*sitecontext.Resolver) *Checkout {
+	return newCheckout(svc, reg, notifyURL, returnURL, nil, sites...)
+}
+
+func NewCheckoutWithPaymentReconciler(
+	svc *service.Service,
+	reg paykit.Registry,
+	notifyURL, returnURL string,
+	reconciler *paymentreconcile.Reconciler,
+	sites ...*sitecontext.Resolver,
+) *Checkout {
+	return newCheckout(svc, reg, notifyURL, returnURL, reconciler, sites...)
+}
+
+func newCheckout(
+	svc *service.Service,
+	reg paykit.Registry,
+	notifyURL, returnURL string,
+	reconciler *paymentreconcile.Reconciler,
+	sites ...*sitecontext.Resolver,
+) *Checkout {
 	var siteResolver *sitecontext.Resolver
 	if len(sites) > 0 {
 		siteResolver = sites[0]
 	}
-	return &Checkout{svc: svc, registry: reg, notifyURL: notifyURL, returnURL: returnURL, sites: siteResolver}
+	return &Checkout{
+		svc: svc, registry: reg, notifyURL: notifyURL, returnURL: returnURL,
+		sites: siteResolver, reconcile: reconciler,
+	}
 }
 
 func defaultString(value, fallback string) string {
@@ -71,6 +97,9 @@ func (c *Checkout) CreateCheckout(ctx context.Context, req *v1.CreateCheckoutReq
 
 	order, err := c.svc.CreateCheckout(ctx, desc)
 	if err != nil {
+		return nil, err
+	}
+	if err := c.svc.PreparePaymentAttempt(ctx, order.OrderNo, provider, "primary"); err != nil {
 		return nil, err
 	}
 	subject := checkoutSubjectFromOrder(ctx, c.svc, order)
@@ -230,39 +259,21 @@ func (c *Checkout) SyncCheckout(ctx context.Context, req *v1.SyncCheckoutReq) (*
 	if order.Status != model.OrderStatusPaying {
 		return checkoutStatusRes(status), nil
 	}
-	gw, ok := c.registry[order.PaymentProvider]
-	if !ok {
-		return nil, commerceerr.InvalidRequest("payment provider is not registered")
+	if c.reconcile == nil {
+		return nil, commerceerr.InvalidRequest("payment reconciliation is not configured")
 	}
-	queryGW, ok := gw.(paykit.QueryPaymentProvider)
-	if !ok {
-		return nil, commerceerr.InvalidRequest("payment provider does not support payment query")
-	}
-	query, err := queryGW.QueryPayment(ctx, paykit.QueryPaymentIn{
-		OrderNo:     req.OrderNo,
-		AmountCents: order.AmountCents,
-	})
-	if err != nil {
+	if _, err := c.reconcile.ReconcileOrder(ctx, req.OrderNo); err != nil {
+		if errors.Is(err, paymentreconcile.ErrQueryUnsupported) {
+			return nil, commerceerr.InvalidRequest("payment provider does not support payment query")
+		}
 		recordPaymentFailure(ctx, c.svc, order, order.PaymentProvider, "query", "", err.Error())
 		return nil, errs.New(commerceerr.CodeGatewayFailed, "payment gateway error", nil)
 	}
-	if query == nil || !query.Success {
-		return checkoutStatusRes(status), nil
-	}
-	amount := query.AmountCents
-	if amount == 0 {
-		amount = order.AmountCents
-	}
-	grant, err := c.svc.SettleCheckout(ctx, req.OrderNo, order.PaymentProvider, query.ProviderTxID, amount)
+	status, err = c.svc.CheckoutStatus(ctx, req.OrderNo, buyerSub, req.BuyerEmail)
 	if err != nil {
 		return nil, err
 	}
-	return &v1.SyncCheckoutRes{
-		OrderNo:       req.OrderNo,
-		Status:        model.OrderStatusFulfilled,
-		DeliveryState: model.DeliveryStateGranted,
-		DeliveryRef:   grant.DeliveryRef,
-	}, nil
+	return checkoutStatusRes(status), nil
 }
 
 func (c *Checkout) CancelCheckout(ctx context.Context, req *v1.CancelCheckoutReq) (*v1.CancelCheckoutRes, error) {

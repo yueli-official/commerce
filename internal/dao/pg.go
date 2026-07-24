@@ -297,6 +297,18 @@ WHERE id = ?`, nullableString(sessionID), orderID)
 	return err
 }
 
+func (r *PG) UpdatePaymentSessionTx(
+	ctx context.Context,
+	tx gdb.TX,
+	orderID, sessionID string,
+) error {
+	_, err := tx.Ctx(ctx).Exec(`
+UPDATE orders
+SET payment_session_id = ?, updated_at = now()
+WHERE id = ?`, nullableString(sessionID), orderID)
+	return err
+}
+
 func (r *PG) PaymentMethods(ctx context.Context) ([]*model.PaymentMethod, error) {
 	var methods []*model.PaymentMethod
 	err := r.db.Model("commerce_payment_methods").Ctx(ctx).
@@ -544,6 +556,23 @@ ON CONFLICT (provider, merchant_account, idempotency_key) DO NOTHING`,
 	return attempt, err
 }
 
+func (r *PG) UpdatePaymentAttemptSessionTx(
+	ctx context.Context,
+	tx gdb.TX,
+	orderID, provider, merchant, sessionID string,
+) error {
+	_, err := tx.Ctx(ctx).Model("payment_attempts").
+		Where("order_id", orderID).
+		Where("provider", provider).
+		Where("merchant_account", merchant).
+		Data(g.Map{
+			"provider_session_id": strings.TrimSpace(sessionID),
+			"updated_at":          gtime.Now(),
+		}).
+		Update()
+	return err
+}
+
 func (r *PG) UpdatePaymentAttemptTx(
 	ctx context.Context,
 	tx gdb.TX,
@@ -558,6 +587,76 @@ func (r *PG) UpdatePaymentAttemptTx(
 		"updated_at":       gtime.Now(),
 	}).Update()
 	return err
+}
+
+func (r *PG) RecordPaymentReconciledTx(
+	ctx context.Context,
+	tx gdb.TX,
+	attemptID string,
+	status paymentrecovery.PaymentStatus,
+	observedAt time.Time,
+) error {
+	data := g.Map{
+		"last_reconciled_at":      observedAt.UTC(),
+		"reconciliation_failures": 0,
+		"reconciliation_error":    "",
+		"updated_at":              gtime.Now(),
+	}
+	switch status {
+	case paymentrecovery.PaymentCreated,
+		paymentrecovery.PaymentActionRequired,
+		paymentrecovery.PaymentPending:
+		data["next_reconcile_at"] = observedAt.UTC().Add(5 * time.Minute)
+	default:
+		data["next_reconcile_at"] = nil
+	}
+	_, err := tx.Ctx(ctx).Model("payment_attempts").Where("id", attemptID).Data(data).Update()
+	return err
+}
+
+func (r *PG) DuePaymentAttempts(
+	ctx context.Context,
+	now time.Time,
+	limit int,
+) ([]paymentrecovery.DuePaymentAttempt, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	var attempts []paymentrecovery.DuePaymentAttempt
+	err := r.db.Model("payment_attempts pa").Ctx(ctx).
+		Fields("pa.id, o.order_no, pa.provider, pa.next_reconcile_at").
+		InnerJoin("orders o", "o.id = pa.order_id").
+		WhereIn("pa.status", []string{
+			string(paymentrecovery.PaymentCreated),
+			string(paymentrecovery.PaymentActionRequired),
+			string(paymentrecovery.PaymentPending),
+		}).
+		WhereNotNull("pa.next_reconcile_at").
+		WhereLTE("pa.next_reconcile_at", now.UTC()).
+		OrderAsc("pa.next_reconcile_at").
+		Limit(limit).
+		Scan(&attempts)
+	return attempts, err
+}
+
+func (r *PG) DeferPaymentReconciliation(
+	ctx context.Context,
+	attemptID string,
+	from, next time.Time,
+) (bool, error) {
+	result, err := r.db.Model("payment_attempts").Ctx(ctx).
+		Where("id", attemptID).
+		Where("next_reconcile_at", from.UTC()).
+		Data(g.Map{
+			"next_reconcile_at": next.UTC(),
+			"updated_at":        gtime.Now(),
+		}).
+		Update()
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
 }
 
 func (r *PG) UpdateOrderPaymentStateTx(

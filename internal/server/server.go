@@ -14,12 +14,14 @@ import (
 	"platform/services/commerce/internal/controller"
 	"platform/services/commerce/internal/dao"
 	"platform/services/commerce/internal/paymentcap"
+	"platform/services/commerce/internal/paymentreconcile"
 	"platform/services/commerce/internal/service"
 	"platform/services/commerce/internal/sitecontext"
 )
 
 // Deps are the wiring dependencies for the commerce server.
 type Deps struct {
+	Service              *service.Service
 	Verifier             *foundationauth.Verifier
 	DB                   *dao.PG
 	Registry             paykit.Registry
@@ -40,17 +42,14 @@ type Deps struct {
 	Webhooks             service.TransactionalWebhookPublisher
 }
 
-// Configure mounts the commerce-service routes onto s.
-func Configure(s *ghttp.Server, d Deps) {
-	apiMiddleware := ghttpx.NewMiddleware(ghttpx.MustRateLimiterFromEnvironment(), ghttpx.ForwardedClientIPKey)
-	s.Use(ghttpx.TraceRouteMiddleware)
+func NewService(d Deps) *service.Service {
 	currentCheckout := d.CurrentCheckout
 	if currentCheckout == nil && d.CurrentDelivery != nil {
 		if resolver, ok := d.CurrentDelivery.(service.CurrentCheckoutItemResolver); ok {
 			currentCheckout = resolver
 		}
 	}
-	svc := service.New(
+	return service.New(
 		d.DB,
 		d.Checkin,
 		service.WithDeliveryConfig(d.Delivery),
@@ -60,6 +59,16 @@ func Configure(s *ghttp.Server, d Deps) {
 		service.WithCurrentCheckoutItemResolver(currentCheckout),
 		service.WithWebhookPublisher(d.Webhooks),
 	)
+}
+
+// Configure mounts the commerce-service routes onto s.
+func Configure(s *ghttp.Server, d Deps) {
+	apiMiddleware := ghttpx.NewMiddleware(ghttpx.MustRateLimiterFromEnvironment(), ghttpx.ForwardedClientIPKey)
+	s.Use(ghttpx.TraceRouteMiddleware)
+	svc := d.Service
+	if svc == nil {
+		svc = NewService(d)
+	}
 
 	// ── Public: liveness ────────────────────────────────────────────────────
 	s.Group("/", func(grp *ghttp.RouterGroup) {
@@ -101,7 +110,10 @@ func Configure(s *ghttp.Server, d Deps) {
 	// ── Public/optional-auth: virtual-goods checkout ─────────────────────────
 	// Guest buyers identify by email; logged-in buyers get their subject from an
 	// optional Bearer token injected by the app BFF.
-	checkoutCtrl := controller.NewCheckout(svc, d.Registry, d.NotifyURL, d.ReturnURL, d.SiteContext)
+	checkoutCtrl := controller.NewCheckoutWithPaymentReconciler(
+		svc, d.Registry, d.NotifyURL, d.ReturnURL,
+		paymentreconcile.New(svc, d.Registry), d.SiteContext,
+	)
 	paymentConfigCtrl := controller.NewPaymentConfig(svc, d.Registry)
 	s.Group("/", func(grp *ghttp.RouterGroup) {
 		grp.Middleware(apiMiddleware, authhttp.Optional(d.Verifier), sitecontext.Middleware(d.SiteContext))

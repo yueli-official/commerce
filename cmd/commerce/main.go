@@ -11,6 +11,8 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gctx"
+	"github.com/yueli-official/foundation/go/work"
+	workpostgres "github.com/yueli-official/foundation/go/work/postgres"
 
 	_ "github.com/gogf/gf/contrib/drivers/pgsql/v2"
 
@@ -26,6 +28,7 @@ import (
 	"platform/services/commerce/internal/appconfig"
 	"platform/services/commerce/internal/commercewebhook"
 	"platform/services/commerce/internal/dao"
+	"platform/services/commerce/internal/paymentreconcile"
 	"platform/services/commerce/internal/server"
 	commerceservice "platform/services/commerce/internal/service"
 )
@@ -81,6 +84,7 @@ func main() {
 	}
 
 	db := dao.NewPG(g.DB())
+	exportingOpenAPI := openapiexport.Requested()
 	var webhookRuntime *webhooksetup.Runtime
 	if g.Cfg().MustGet(ctx, "commerce.webhook.enabled").Bool() {
 		masterKey, err := webhooksetup.DecodeMasterKey(
@@ -122,7 +126,7 @@ func main() {
 	if webhookRuntime != nil {
 		webhookPublisher = webhookRuntime.Hooks
 	}
-	server.Configure(s, server.Deps{
+	deps := server.Deps{
 		Verifier:             verifier,
 		DB:                   db,
 		Registry:             reg,
@@ -140,12 +144,71 @@ func main() {
 		CapabilityProbeScope: appconfig.CapabilityProbeScope(ctx),
 		CapabilityService:    appconfig.CapabilityServiceMetadata(),
 		Webhooks:             webhookPublisher,
-	})
+	}
+	svc := server.NewService(deps)
+	deps.Service = svc
+
+	var paymentWorker *work.Runner
+	if !exportingOpenAPI && g.Cfg().MustGet(ctx, "commerce.worker.enabled", true).Bool() {
+		workDB, err := postgresdb.OpenDefault(ctx)
+		if err != nil {
+			panic(err)
+		}
+		defer workDB.Close()
+		catalog, err := work.Compile(paymentreconcile.WorkDefinition())
+		if err != nil {
+			panic(err)
+		}
+		adapter, err := workpostgres.New(ctx, catalog, workpostgres.Options{
+			DB: workDB, InstanceKey: "commerce:payment-reconciliation:v1",
+		})
+		if err != nil {
+			panic(err)
+		}
+		workerID := g.Cfg().MustGet(ctx, "commerce.worker.id").String()
+		if workerID == "" {
+			if hostname, hostErr := os.Hostname(); hostErr == nil && hostname != "" {
+				workerID = "commerce-" + hostname
+			} else {
+				workerID = "commerce-worker"
+			}
+		}
+		paymentWorker, err = work.NewRunner(
+			catalog,
+			adapter,
+			paymentreconcile.WorkHandlers(
+				db, adapter, paymentreconcile.New(svc, reg), time.Now,
+			),
+			work.RunnerOptions{
+				WorkerID: workerID,
+				PollInterval: g.Cfg().MustGet(
+					ctx, "commerce.worker.pollInterval", "2s",
+				).Duration(),
+				OnError: func(runErr error) {
+					g.Log().Warning(ctx, "commerce payment worker error", "error", runErr)
+				},
+			},
+		)
+		if err != nil {
+			panic(err)
+		}
+	}
+	server.Configure(s, deps)
 	if handled, err := openapiexport.ExportIfRequested(s); handled {
 		if err != nil {
 			panic(err)
 		}
 		return
+	}
+	if paymentWorker != nil {
+		workerContext, stopWorker := context.WithCancel(ctx)
+		defer stopWorker()
+		go func() {
+			if runErr := paymentWorker.Run(workerContext); runErr != nil &&
+				!errors.Is(runErr, context.Canceled) {
+				g.Log().Error(ctx, "commerce payment worker stopped", "error", runErr)
+			}
+		}()
 	}
 	g.Log().Info(ctx, "commerce-service starting")
 	s.Run()
