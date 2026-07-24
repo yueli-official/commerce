@@ -5,23 +5,31 @@ import "context"
 type FakeProvider struct {
 	name string
 
-	NextCreate  CreatePaymentOut
-	NextCapture CapturePaymentOut
-	NextNotify  NotifyOut
-	NextQuery   QueryPaymentOut
-	NextRefund  RefundOut
+	NextCreate      CreatePaymentOut
+	NextCapture     CapturePaymentOut
+	NextNotify      NotifyOut
+	NextQuery       QueryPaymentOut
+	NextRefund      RefundOut
+	NextRefundQuery QueryRefundOut
+	NextDispute     DisputeOut
 
-	CreateErr  error
-	CaptureErr error
-	NotifyErr  error
-	QueryErr   error
-	RefundErr  error
+	CreateErr       error
+	CaptureErr      error
+	NotifyErr       error
+	QueryErr        error
+	RefundErr       error
+	RefundQueryErr  error
+	DisputeErr      error
+	DisputeQueryErr error
 
-	CreateCalls  []CreatePaymentIn
-	CaptureCalls []CapturePaymentIn
-	NotifyCalls  []NotifyCall
-	QueryCalls   []QueryPaymentIn
-	RefundCalls  []RefundIn
+	CreateCalls       []CreatePaymentIn
+	CaptureCalls      []CapturePaymentIn
+	NotifyCalls       []NotifyCall
+	QueryCalls        []QueryPaymentIn
+	RefundCalls       []RefundIn
+	RefundQueryCalls  []QueryRefundIn
+	DisputeCalls      []NotifyCall
+	DisputeQueryCalls []string
 }
 
 type NotifyCall struct {
@@ -87,5 +95,47 @@ func (p *FakeProvider) Refund(_ context.Context, in RefundIn) (*RefundOut, error
 		return nil, p.RefundErr
 	}
 	out := p.NextRefund
+	return &out, nil
+}
+
+func (p *FakeProvider) QueryRefund(_ context.Context, in QueryRefundIn) (*QueryRefundOut, error) {
+	p.RefundQueryCalls = append(p.RefundQueryCalls, in)
+	if p.RefundQueryErr != nil {
+		return nil, p.RefundQueryErr
+	}
+	out := p.NextRefundQuery
+	return &out, nil
+}
+
+func (p *FakeProvider) VerifyDispute(
+	_ context.Context,
+	body []byte,
+	headers map[string]string,
+) (*DisputeOut, error) {
+	bodyCopy := append([]byte(nil), body...)
+	headersCopy := make(map[string]string, len(headers))
+	for key, value := range headers {
+		headersCopy[key] = value
+	}
+	p.DisputeCalls = append(
+		p.DisputeCalls,
+		NotifyCall{Body: bodyCopy, Headers: headersCopy},
+	)
+	if p.DisputeErr != nil {
+		return nil, p.DisputeErr
+	}
+	out := p.NextDispute
+	return &out, nil
+}
+
+func (p *FakeProvider) QueryDispute(
+	_ context.Context,
+	disputeID string,
+) (*DisputeOut, error) {
+	p.DisputeQueryCalls = append(p.DisputeQueryCalls, disputeID)
+	if p.DisputeQueryErr != nil {
+		return nil, p.DisputeQueryErr
+	}
+	out := p.NextDispute
 	return &out, nil
 }

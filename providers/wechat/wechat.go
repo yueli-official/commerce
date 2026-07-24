@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	wechatCore "github.com/wechatpay-apiv3/wechatpay-go/core"
 	"github.com/wechatpay-apiv3/wechatpay-go/core/auth/signers"
@@ -44,6 +45,13 @@ type wechatProvider struct {
 	healthSvc  wechatHealthService
 }
 
+var (
+	_ paykit.Provider             = (*wechatProvider)(nil)
+	_ paykit.QueryPaymentProvider = (*wechatProvider)(nil)
+	_ paykit.QueryRefundProvider  = (*wechatProvider)(nil)
+	_ paykit.HealthChecker        = (*wechatProvider)(nil)
+)
+
 func (p *wechatProvider) Name() string {
 	return "wechat"
 }
@@ -54,6 +62,10 @@ type wechatNativeService interface {
 
 type wechatRefundService interface {
 	Create(context.Context, refunddomestic.CreateRequest) (*refunddomestic.Refund, error)
+	QueryByOutRefundNo(
+		context.Context,
+		refunddomestic.QueryByOutRefundNoRequest,
+	) (*refunddomestic.Refund, error)
 }
 
 type wechatNotifyService interface {
@@ -282,12 +294,100 @@ func (p *wechatProvider) Refund(ctx context.Context, in paykit.RefundIn) (*payki
 	if err != nil {
 		return nil, fmt.Errorf("wechat refund create: %w", err)
 	}
+	return refundOutFromWechat(refund, in.RefundNo, in.AmountCents, currency)
+}
+
+func (p *wechatProvider) QueryRefund(
+	ctx context.Context,
+	in paykit.QueryRefundIn,
+) (*paykit.QueryRefundOut, error) {
+	if p.refundSvc == nil {
+		return nil, fmt.Errorf("wechat refund service is not configured")
+	}
+	refundNo := strings.TrimSpace(in.RefundNo)
+	if refundNo == "" {
+		return nil, fmt.Errorf("wechat refund number is required for refund query")
+	}
+	refund, err := p.refundSvc.QueryByOutRefundNo(
+		ctx,
+		refunddomestic.QueryByOutRefundNoRequest{
+			OutRefundNo: wechatCore.String(refundNo),
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("wechat query refund: %w", err)
+	}
+	normalized, err := refundOutFromWechat(
+		refund, refundNo, in.AmountCents, in.Currency,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if expectedID := strings.TrimSpace(in.ProviderRefundID); expectedID != "" &&
+		normalized.ProviderID != expectedID {
+		return nil, fmt.Errorf(
+			"wechat refund query id mismatch: got %q, want %q",
+			normalized.ProviderID, expectedID,
+		)
+	}
+	observedAt := time.Time{}
+	if refund.SuccessTime != nil {
+		observedAt = refund.SuccessTime.UTC()
+	}
+	return &paykit.QueryRefundOut{
+		Success: normalized.Success, ProviderID: normalized.ProviderID,
+		AmountCents: normalized.AmountCents, Currency: normalized.Currency,
+		ObservationID: "wechat:refund-query:" + refundNo + ":" + normalized.ProviderStatus,
+		Status:        normalized.Status, ProviderStatus: normalized.ProviderStatus,
+		ObservedAt: observedAt,
+	}, nil
+}
+
+func refundOutFromWechat(
+	refund *refunddomestic.Refund,
+	expectedRefundNo string,
+	expectedAmountCents int,
+	expectedCurrency string,
+) (*paykit.RefundOut, error) {
 	if refund == nil || refund.RefundId == nil || strings.TrimSpace(*refund.RefundId) == "" {
 		return nil, fmt.Errorf("wechat refund returned empty refund id")
 	}
+	if refund.OutRefundNo != nil &&
+		strings.TrimSpace(*refund.OutRefundNo) != strings.TrimSpace(expectedRefundNo) {
+		return nil, fmt.Errorf(
+			"wechat refund number mismatch: got %q, want %q",
+			strings.TrimSpace(*refund.OutRefundNo), strings.TrimSpace(expectedRefundNo),
+		)
+	}
+	amountCents := expectedAmountCents
+	currency := strings.ToUpper(strings.TrimSpace(expectedCurrency))
+	if currency == "" {
+		currency = "CNY"
+	}
+	if refund.Amount != nil && refund.Amount.Refund != nil {
+		observedAmount := int(*refund.Amount.Refund)
+		if expectedAmountCents > 0 && observedAmount != expectedAmountCents {
+			return nil, fmt.Errorf(
+				"wechat refund amount mismatch: got %d, want %d",
+				observedAmount, expectedAmountCents,
+			)
+		}
+		amountCents = observedAmount
+	}
+	if refund.Amount != nil && refund.Amount.Currency != nil &&
+		strings.TrimSpace(*refund.Amount.Currency) != "" {
+		observedCurrency := strings.ToUpper(strings.TrimSpace(*refund.Amount.Currency))
+		if currency != "" && observedCurrency != currency {
+			return nil, fmt.Errorf(
+				"wechat refund currency mismatch: got %s, want %s",
+				observedCurrency, currency,
+			)
+		}
+		currency = observedCurrency
+	}
 	out := &paykit.RefundOut{
-		ProviderID: *refund.RefundId, AmountCents: in.AmountCents,
-		Currency: currency,
+		ProviderID:  strings.TrimSpace(*refund.RefundId),
+		AmountCents: amountCents, Currency: currency,
 	}
 	if refund.Status == nil {
 		out.Status = paykit.RefundStatusPending
@@ -375,6 +475,14 @@ type wechatRefundAPI struct {
 
 func (a *wechatRefundAPI) Create(ctx context.Context, req refunddomestic.CreateRequest) (*refunddomestic.Refund, error) {
 	resp, _, err := a.svc.Create(ctx, req)
+	return resp, err
+}
+
+func (a *wechatRefundAPI) QueryByOutRefundNo(
+	ctx context.Context,
+	req refunddomestic.QueryByOutRefundNoRequest,
+) (*refunddomestic.Refund, error) {
+	resp, _, err := a.svc.QueryByOutRefundNo(ctx, req)
 	return resp, err
 }
 

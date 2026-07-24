@@ -116,6 +116,37 @@ func TestWeChatRefundUsesOutTradeNoAndRefundNo(t *testing.T) {
 	}
 }
 
+func TestWeChatQueryRefundMapsProcessingRefund(t *testing.T) {
+	refundSvc := &fakeWeChatRefundService{
+		refund: &refunddomestic.Refund{
+			RefundId:    ptrString("WX-REFUND-1"),
+			OutRefundNo: ptrString("REFUND-WX-1"),
+			Status:      refunddomestic.STATUS_PROCESSING.Ptr(),
+			Amount: &refunddomestic.Amount{
+				Refund: ptrInt64(1234), Currency: ptrString("CNY"),
+			},
+		},
+	}
+	gw := &wechatProvider{merchantID: "mch-1", refundSvc: refundSvc}
+
+	out, err := gw.QueryRefund(context.Background(), paykit.QueryRefundIn{
+		OrderNo: "ORD-WX-1", RefundNo: "REFUND-WX-1",
+		ProviderRefundID: "WX-REFUND-1", AmountCents: 1234, Currency: "CNY",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Success || out.Status != paykit.RefundStatusPending ||
+		out.ProviderID != "WX-REFUND-1" || out.AmountCents != 1234 ||
+		out.Currency != "CNY" || out.ProviderStatus != "PROCESSING" {
+		t.Fatalf("refund query output = %+v", out)
+	}
+	if refundSvc.lastQuery.OutRefundNo == nil ||
+		*refundSvc.lastQuery.OutRefundNo != "REFUND-WX-1" {
+		t.Fatalf("refund query request = %+v", refundSvc.lastQuery)
+	}
+}
+
 func TestWeChatNotifyMapsSuccessfulTransaction(t *testing.T) {
 	notifySvc := &fakeWeChatNotifyService{tx: &payments.Transaction{
 		OutTradeNo:    ptrString("ORD-WX-1"),
@@ -177,6 +208,7 @@ func (f *fakeWeChatNativeService) Prepay(ctx context.Context, req native.PrepayR
 
 type fakeWeChatRefundService struct {
 	lastCreate refunddomestic.CreateRequest
+	lastQuery  refunddomestic.QueryByOutRefundNoRequest
 	refund     *refunddomestic.Refund
 	err        error
 }
@@ -195,6 +227,14 @@ func (service *fakeWeChatHealthService) QueryOrderByOutTradeNo(context.Context, 
 
 func (f *fakeWeChatRefundService) Create(ctx context.Context, req refunddomestic.CreateRequest) (*refunddomestic.Refund, error) {
 	f.lastCreate = req
+	return f.refund, f.err
+}
+
+func (f *fakeWeChatRefundService) QueryByOutRefundNo(
+	_ context.Context,
+	req refunddomestic.QueryByOutRefundNoRequest,
+) (*refunddomestic.Refund, error) {
+	f.lastQuery = req
 	return f.refund, f.err
 }
 

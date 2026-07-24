@@ -215,6 +215,148 @@ func TestPayPalRefundPaymentUsesCaptureRefund(t *testing.T) {
 	}
 }
 
+func TestPayPalQueryRefundMapsPendingRefund(t *testing.T) {
+	srv := paypalTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet ||
+			r.URL.Path != "/v2/payments/refunds/REFUND-1" {
+			t.Fatalf("refund query request = %s %s", r.Method, r.URL.Path)
+		}
+		writeJSON(t, w, map[string]any{
+			"id": "REFUND-1", "status": "PENDING",
+			"amount": map[string]any{"currency_code": "USD", "value": "12.34"},
+		})
+	})
+	defer srv.Close()
+
+	gw := newPayPalTestProvider(t, srv.URL)
+	queryGW, ok := gw.(paykit.QueryRefundProvider)
+	if !ok {
+		t.Fatal("paypal provider does not implement QueryRefundProvider")
+	}
+	out, err := queryGW.QueryRefund(context.Background(), paykit.QueryRefundIn{
+		OrderNo: "ORD-PP-1", RefundNo: "REFUND-PP-1",
+		ProviderRefundID: "REFUND-1", AmountCents: 1234, Currency: "USD",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Success || out.Status != paykit.RefundStatusPending ||
+		out.ProviderID != "REFUND-1" || out.AmountCents != 1234 ||
+		out.Currency != "USD" || out.ProviderStatus != "PENDING" {
+		t.Fatalf("refund query output = %+v", out)
+	}
+}
+
+func TestPayPalVerifiesAndMapsDisputeWebhook(t *testing.T) {
+	srv := paypalTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost ||
+			r.URL.Path != "/v1/notifications/verify-webhook-signature" {
+			t.Fatalf("verification request = %s %s", r.Method, r.URL.Path)
+		}
+		var verification struct {
+			WebhookID    string         `json:"webhook_id"`
+			WebhookEvent map[string]any `json:"webhook_event"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&verification); err != nil {
+			t.Fatal(err)
+		}
+		if verification.WebhookID != "WH-1" ||
+			verification.WebhookEvent["id"] != "WH-EVENT-1" {
+			t.Fatalf("verification body = %+v", verification)
+		}
+		writeJSON(t, w, map[string]string{"verification_status": "SUCCESS"})
+	})
+	defer srv.Close()
+
+	gw, err := paypal.NewProvider(paypal.Config{
+		ClientID: "client", ClientSecret: "secret",
+		BaseURL: srv.URL, WebhookID: "WH-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, ok := gw.(paykit.VerifyDisputeProvider)
+	if !ok {
+		t.Fatal("paypal provider does not implement VerifyDisputeProvider")
+	}
+	body := []byte(`{
+		"id":"WH-EVENT-1",
+		"event_type":"CUSTOMER.DISPUTE.CREATED",
+		"create_time":"2026-07-24T18:00:00Z",
+		"resource":{
+			"dispute_id":"PP-D-1",
+			"status":"WAITING_FOR_SELLER_RESPONSE",
+			"reason":"MERCHANDISE_OR_SERVICE_NOT_RECEIVED",
+			"create_time":"2026-07-24T17:55:00Z",
+			"update_time":"2026-07-24T18:00:00Z",
+			"seller_response_due_date":"2026-07-31T18:00:00Z",
+			"dispute_amount":{"currency_code":"USD","value":"12.34"},
+			"disputed_transactions":[{
+				"seller_transaction_id":"CAPTURE-1"
+			}]
+		}
+	}`)
+	out, err := verifier.VerifyDispute(
+		context.Background(),
+		body,
+		map[string]string{
+			"Paypal-Auth-Algo":         "SHA256withRSA",
+			"Paypal-Cert-Url":          "https://api.paypal.com/cert.pem",
+			"Paypal-Transmission-Id":   "transmission-1",
+			"Paypal-Transmission-Sig":  "signature-1",
+			"Paypal-Transmission-Time": "2026-07-24T18:00:00Z",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.EventID != "WH-EVENT-1" ||
+		out.ProviderDisputeID != "PP-D-1" ||
+		out.ProviderTxID != "CAPTURE-1" ||
+		out.Status != paykit.DisputeStatusNeedsResponse ||
+		out.AmountCents != 1234 || out.Currency != "USD" {
+		t.Fatalf("dispute output = %+v", out)
+	}
+}
+
+func TestPayPalQueryDisputeMapsBuyerFavourToLost(t *testing.T) {
+	srv := paypalTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet ||
+			r.URL.Path != "/v1/customer/disputes/PP-D-1" {
+			t.Fatalf("dispute query = %s %s", r.Method, r.URL.Path)
+		}
+		writeJSON(t, w, map[string]any{
+			"dispute_id": "PP-D-1", "status": "RESOLVED",
+			"dispute_outcome": map[string]string{
+				"outcome_code": "RESOLVED_BUYER_FAVOUR",
+			},
+			"dispute_amount": map[string]string{
+				"currency_code": "USD", "value": "12.34",
+			},
+			"disputed_transactions": []map[string]string{{
+				"seller_transaction_id": "CAPTURE-1",
+			}},
+			"update_time": "2026-07-24T18:00:00Z",
+		})
+	})
+	defer srv.Close()
+
+	gw := newPayPalTestProvider(t, srv.URL)
+	query, ok := gw.(paykit.QueryDisputeProvider)
+	if !ok {
+		t.Fatal("paypal provider does not implement QueryDisputeProvider")
+	}
+	out, err := query.QueryDispute(context.Background(), "PP-D-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != paykit.DisputeStatusLost ||
+		out.OutcomeCode != "RESOLVED_BUYER_FAVOUR" ||
+		out.ProviderTxID != "CAPTURE-1" {
+		t.Fatalf("dispute query output = %+v", out)
+	}
+}
+
 func TestPayPalCaptureRejectsAmountMismatch(t *testing.T) {
 	srv := paypalTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, map[string]any{

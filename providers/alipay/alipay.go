@@ -30,6 +30,13 @@ type alipayProvider struct {
 	appID  string // configured merchant app_id; verified against every notify
 }
 
+var (
+	_ paykit.Provider             = (*alipayProvider)(nil)
+	_ paykit.QueryPaymentProvider = (*alipayProvider)(nil)
+	_ paykit.QueryRefundProvider  = (*alipayProvider)(nil)
+	_ paykit.HealthChecker        = (*alipayProvider)(nil)
+)
+
 func (p *alipayProvider) Name() string {
 	return "alipay"
 }
@@ -246,6 +253,85 @@ func (p *alipayProvider) Refund(ctx context.Context, in paykit.RefundIn) (*payki
 	}, nil
 }
 
+func (p *alipayProvider) QueryRefund(
+	ctx context.Context,
+	in paykit.QueryRefundIn,
+) (*paykit.QueryRefundOut, error) {
+	refundNo := strings.TrimSpace(in.RefundNo)
+	if refundNo == "" {
+		return nil, fmt.Errorf("alipay refund number is required for refund query")
+	}
+	response, err := p.client.TradeFastPayRefundQuery(
+		ctx,
+		smartalipay.TradeFastPayRefundQuery{
+			OutTradeNo: in.OrderNo, OutRequestNo: refundNo,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("alipay TradeFastPayRefundQuery: %w", err)
+	}
+	if response == nil {
+		return nil, fmt.Errorf("alipay refund query returned empty response")
+	}
+	if response.IsFailure() {
+		return nil, fmt.Errorf(
+			"alipay refund query failed: %s %s",
+			response.Code, response.SubMsg,
+		)
+	}
+	if response.OutTradeNo != "" && response.OutTradeNo != in.OrderNo {
+		return nil, fmt.Errorf(
+			"alipay refund query order mismatch: got %q, want %q",
+			response.OutTradeNo, in.OrderNo,
+		)
+	}
+	if response.OutRequestNo != "" && response.OutRequestNo != refundNo {
+		return nil, fmt.Errorf(
+			"alipay refund query number mismatch: got %q, want %q",
+			response.OutRequestNo, refundNo,
+		)
+	}
+	amountCents := in.AmountCents
+	if strings.TrimSpace(response.RefundAmount) != "" {
+		amount, err := alipayAmountToCents(response.RefundAmount)
+		if err != nil {
+			return nil, fmt.Errorf("alipay refund query amount: %w", err)
+		}
+		if in.AmountCents > 0 && amount != in.AmountCents {
+			return nil, fmt.Errorf(
+				"alipay refund amount mismatch: got %d, want %d",
+				amount, in.AmountCents,
+			)
+		}
+		amountCents = amount
+	}
+	status := paykit.RefundStatusPending
+	success := false
+	providerStatus := strings.TrimSpace(response.RefundStatus)
+	if providerStatus == "REFUND_SUCCESS" {
+		status = paykit.RefundStatusSucceeded
+		success = true
+	} else if providerStatus != "" {
+		return nil, fmt.Errorf("alipay refund query status %q", providerStatus)
+	}
+	if providerStatus == "" {
+		providerStatus = "NOT_RECEIVED_OR_FAILED"
+	}
+	return &paykit.QueryRefundOut{
+		Success: success, ProviderID: refundNo, AmountCents: amountCents,
+		Currency: "CNY", Status: status, ProviderStatus: providerStatus,
+		ObservationID: "alipay:refund-query:" + refundNo + ":" + providerStatus,
+	}, nil
+}
+
 func centsToAmount(cents int) string {
 	return fmt.Sprintf("%.2f", float64(cents)/100)
+}
+
+func alipayAmountToCents(value string) (int, error) {
+	amount, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, err
+	}
+	return int(math.Round(amount * 100)), nil
 }
