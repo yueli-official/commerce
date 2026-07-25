@@ -2,9 +2,13 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	foundationauth "github.com/yueli-official/foundation/go/auth"
+	"platform/gokit/errs"
 	v1 "platform/services/commerce/api/v1"
+	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/sitecontext"
 )
 
@@ -23,5 +27,57 @@ func TestCheckoutItemsForceTrustedSiteForEveryItem(t *testing.T) {
 		if item.SiteKey != "shop-main" {
 			t.Fatalf("items[%d].SiteKey = %q, want shop-main", i, item.SiteKey)
 		}
+	}
+}
+
+func TestRequireAdminAcceptsOnlyTrustedSiteOrLegacyAdmin(t *testing.T) {
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		wantErr bool
+	}{
+		{
+			name: "trusted site assertion context",
+			ctx: sitecontext.With(
+				context.Background(),
+				sitecontext.Context{SiteKey: "shop-main"},
+			),
+		},
+		{
+			name: "legacy commerce administrator",
+			ctx: foundationauth.NewContext(
+				context.Background(),
+				&foundationauth.Principal{Subject: "legacy-admin", Roles: []string{"admin"}},
+			),
+		},
+		{
+			name: "ordinary browser principal",
+			ctx: foundationauth.NewContext(
+				context.Background(),
+				&foundationauth.Principal{Subject: "browser-user"},
+			),
+			wantErr: true,
+		},
+		{
+			name:    "anonymous request",
+			ctx:     context.Background(),
+			wantErr: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := requireAdmin(test.ctx)
+			if !test.wantErr {
+				if err != nil {
+					t.Fatalf("requireAdmin() error = %v", err)
+				}
+				return
+			}
+			var coded *errs.Coded
+			if !errors.As(err, &coded) || coded.Code != commerceerr.CodeForbidden {
+				t.Fatalf("requireAdmin() error = %v, want %s", err, commerceerr.CodeForbidden)
+			}
+		})
 	}
 }
