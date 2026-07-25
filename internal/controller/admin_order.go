@@ -15,6 +15,7 @@ import (
 	"platform/services/commerce/internal/paymentrecovery"
 	"platform/services/commerce/internal/recoveryops"
 	"platform/services/commerce/internal/service"
+	"platform/services/commerce/internal/sitecontext"
 )
 
 type AdminOrder struct {
@@ -289,6 +290,9 @@ func recoveryRefundStatus(out *paykit.RefundOut) (paymentrecovery.RefundStatus, 
 }
 
 func requireAdmin(ctx context.Context) error {
+	if _, trusted := sitecontext.From(ctx); trusted {
+		return nil
+	}
 	p, ok := foundationauth.FromContext(ctx)
 	if !ok || p == nil || !p.HasRole("admin") {
 		return commerceerr.Forbidden()
