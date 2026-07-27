@@ -15,7 +15,7 @@ import (
 	"time"
 
 	foundationhttpclient "github.com/yueli-official/foundation/go/httpclient"
-	"platform/gokit/observability"
+	commerceruntime "platform/services/commerce/internal/runtime"
 )
 
 type Config struct {
@@ -59,7 +59,7 @@ func New(cfg Config) (*Client, error) {
 	if cli == nil {
 		cli = http.DefaultClient
 	}
-	cli = observability.HTTPClient(cli)
+	cli = commerceruntime.TelemetryHTTPClient(cli)
 	scope := strings.TrimSpace(cfg.Scope)
 	if scope == "" {
 		scope = "asset:sign"

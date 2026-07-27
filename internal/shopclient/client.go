@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	foundationhttpclient "github.com/yueli-official/foundation/go/httpclient"
-	"platform/gokit/observability"
+	commerceruntime "platform/services/commerce/internal/runtime"
 )
 
 type Config struct {
@@ -58,7 +58,7 @@ func New(cfg Config) (*Client, error) {
 	if cli == nil {
 		cli = http.DefaultClient
 	}
-	cli = observability.HTTPClient(cli)
+	cli = commerceruntime.TelemetryHTTPClient(cli)
 	return &Client{base: base, http: cli}, nil
 }
 

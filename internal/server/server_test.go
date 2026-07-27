@@ -33,11 +33,11 @@ import (
 	"github.com/gogf/gf/v2/test/gtest"
 	_ "github.com/lib/pq"
 
-	foundationauth "github.com/yueli-official/foundation/go/auth"
-	"platform/gokit/authsetup"
 	"github.com/yueli-official/commerce/paykit"
+	foundationauth "github.com/yueli-official/foundation/go/auth"
 	"platform/services/commerce/internal/dao"
 	"platform/services/commerce/internal/model"
+	commerceruntime "platform/services/commerce/internal/runtime"
 	"platform/services/commerce/internal/server"
 	"platform/services/commerce/internal/service"
 )
@@ -184,7 +184,7 @@ func mustVerifier(t *gtest.T, priv *rsa.PrivateKey) *foundationauth.Verifier {
 	set := jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{
 		Key: priv.Public(), KeyID: testKID, Algorithm: "RS256", Use: "sig",
 	}}}
-	v, err := authsetup.NewStaticVerifier(authsetup.StaticVerifierConfig{
+	v, err := commerceruntime.NewStaticVerifier(commerceruntime.StaticVerifierConfig{
 		Keys:   set,
 		Issuer: testIssuer,
 	})

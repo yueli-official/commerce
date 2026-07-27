@@ -18,36 +18,33 @@ import (
 
 	_ "github.com/gogf/gf/contrib/drivers/pgsql/v2"
 
-	"platform/gokit/authsetup"
-	"platform/gokit/observability"
-	"platform/gokit/openapiexport"
-	"platform/gokit/postgresdb"
-	"platform/gokit/webhooksetup"
 	"github.com/yueli-official/commerce/paykit"
 	payalipay "github.com/yueli-official/commerce/paykit/providers/alipay"
 	paydev "github.com/yueli-official/commerce/paykit/providers/dev"
 	paypal "github.com/yueli-official/commerce/paykit/providers/paypal"
 	wechat "github.com/yueli-official/commerce/paykit/providers/wechat"
+	"platform/gokit/webhooksetup"
 	"platform/services/commerce/internal/appconfig"
 	"platform/services/commerce/internal/commerceaudit"
 	"platform/services/commerce/internal/commercewebhook"
 	"platform/services/commerce/internal/dao"
 	"platform/services/commerce/internal/deliveryrecovery"
 	"platform/services/commerce/internal/paymentreconcile"
+	commerceruntime "platform/services/commerce/internal/runtime"
 	"platform/services/commerce/internal/server"
 	commerceservice "platform/services/commerce/internal/service"
 )
 
 func main() {
 	ctx := gctx.New()
-	shutdown, err := observability.StartFromEnvironment(ctx, "commerce-api")
+	shutdown, err := commerceruntime.StartTelemetry(ctx, "commerce-api")
 	if err != nil {
 		panic(err)
 	}
-	defer observability.ShutdownWithTimeout(shutdown)
+	defer commerceruntime.ShutdownTelemetry(shutdown)
 
 	jw := appconfig.LoadJWKS(ctx)
-	verifier, err := authsetup.NewRemoteVerifier(authsetup.RemoteVerifierConfig{
+	verifier, err := commerceruntime.NewRemoteVerifier(commerceruntime.RemoteVerifierConfig{
 		JWKSURL: jw.URL, Issuer: jw.Issuer, Audience: jw.Audience,
 		AllowLoopbackHTTP: jw.AllowLoopbackHTTP,
 	})
@@ -89,7 +86,7 @@ func main() {
 	}
 
 	db := dao.NewPG(g.DB())
-	exportingOpenAPI := openapiexport.Requested()
+	exportingOpenAPI := commerceruntime.OpenAPIRequested()
 	var webhookRuntime *webhooksetup.Runtime
 	if g.Cfg().MustGet(ctx, "commerce.webhook.enabled").Bool() {
 		masterKey, err := webhooksetup.DecodeMasterKey(
@@ -98,7 +95,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		webhookDB, err := postgresdb.OpenDefault(ctx)
+		webhookDB, err := commerceruntime.OpenDefaultPostgres(ctx)
 		if err != nil {
 			panic(err)
 		}
@@ -156,7 +153,7 @@ func main() {
 	var paymentWorker *work.Runner
 	var foundationDB *sql.DB
 	if !exportingOpenAPI {
-		foundationDB, err = postgresdb.OpenDefault(ctx)
+		foundationDB, err = commerceruntime.OpenDefaultPostgres(ctx)
 		if err != nil {
 			panic(err)
 		}
@@ -222,7 +219,7 @@ func main() {
 		}
 	}
 	server.Configure(s, deps)
-	if handled, err := openapiexport.ExportIfRequested(s); handled {
+	if handled, err := commerceruntime.ExportOpenAPIIfRequested(s); handled {
 		if err != nil {
 			panic(err)
 		}
@@ -249,7 +246,7 @@ func buildGatewayRegistry(devSettle bool, alipayCfg appconfig.Alipay, paypalCfg 
 			return nil, err
 		}
 	}
-	providerHTTPClient := observability.HTTPClient(&http.Client{Timeout: 15 * time.Second})
+	providerHTTPClient := commerceruntime.TelemetryHTTPClient(&http.Client{Timeout: 15 * time.Second})
 	if alipayCfg.AppID != "" && alipayCfg.PrivateKey != "" {
 		alipayGW, err := payalipay.NewProvider(payalipay.Config{
 			AppID:           alipayCfg.AppID,

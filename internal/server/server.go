@@ -5,16 +5,15 @@ package server
 import (
 	"github.com/gogf/gf/v2/net/ghttp"
 
+	"github.com/yueli-official/commerce/paykit"
 	foundationauth "github.com/yueli-official/foundation/go/auth"
 	"github.com/yueli-official/foundation/go/capability"
-	"platform/gokit/authhttp"
 	"platform/gokit/ghttpx"
-	"platform/gokit/healthcheck"
-	"github.com/yueli-official/commerce/paykit"
 	"platform/services/commerce/internal/controller"
 	"platform/services/commerce/internal/dao"
 	"platform/services/commerce/internal/paymentcap"
 	"platform/services/commerce/internal/paymentreconcile"
+	commerceruntime "platform/services/commerce/internal/runtime"
 	"platform/services/commerce/internal/service"
 	"platform/services/commerce/internal/sitecontext"
 )
@@ -84,13 +83,15 @@ func Configure(s *ghttp.Server, d Deps) {
 		grp.GET("/healthz", func(r *ghttp.Request) {
 			r.Response.WriteJson(map[string]any{"status": "up"})
 		})
-		grp.GET("/readyz", healthcheck.Handler(map[string]healthcheck.Check{"database": healthcheck.Database}))
+		grp.GET("/readyz", commerceruntime.ReadinessHandler(map[string]commerceruntime.ReadinessCheck{
+			"database": commerceruntime.DatabaseReadiness,
+		}))
 	})
 
 	if d.Capabilities != nil {
 		capabilityCtrl := controller.NewCapability(svc, d.Capabilities, d.CapabilityService, d.CapabilityScope, d.CapabilityProbeScope)
 		s.Group("/", func(grp *ghttp.RouterGroup) {
-			grp.Middleware(apiMiddleware, authhttp.Required(d.Verifier))
+			grp.Middleware(apiMiddleware, commerceruntime.RequiredAuth(d.Verifier))
 			grp.Bind(capabilityCtrl)
 		})
 	}
@@ -133,7 +134,7 @@ func Configure(s *ghttp.Server, d Deps) {
 	)
 	paymentConfigCtrl := controller.NewPaymentConfig(svc, d.Registry)
 	s.Group("/", func(grp *ghttp.RouterGroup) {
-		grp.Middleware(apiMiddleware, authhttp.Optional(d.Verifier), sitecontext.Middleware(d.SiteContext))
+		grp.Middleware(apiMiddleware, commerceruntime.OptionalAuth(d.Verifier), sitecontext.Middleware(d.SiteContext))
 		grp.Bind(checkoutCtrl)
 		grp.Bind(paymentConfigCtrl)
 	})
@@ -144,7 +145,7 @@ func Configure(s *ghttp.Server, d Deps) {
 	creditsCtrl := controller.NewCredits(svc)
 	adminOrderCtrl := controller.NewAdminOrder(svc, d.Registry)
 	s.Group("/", func(grp *ghttp.RouterGroup) {
-		grp.Middleware(apiMiddleware, authhttp.Required(d.Verifier), sitecontext.Middleware(d.SiteContext))
+		grp.Middleware(apiMiddleware, commerceruntime.RequiredAuth(d.Verifier), sitecontext.Middleware(d.SiteContext))
 		grp.Bind(accessCtrl)
 		grp.Bind(checkinCtrl)
 		grp.Bind(creditsCtrl)
