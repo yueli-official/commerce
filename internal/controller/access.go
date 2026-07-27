@@ -4,7 +4,6 @@ import (
 	"context"
 
 	foundationauth "github.com/yueli-official/foundation/go/auth"
-	"platform/gokit/errs"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/service"
@@ -30,7 +29,7 @@ func NewAccess(svc *service.Service, sites ...*sitecontext.Resolver) *Access {
 func (c *Access) Entitled(ctx context.Context, req *v1.EntitledReq) (*v1.EntitledRes, error) {
 	p, ok := foundationauth.FromContext(ctx)
 	if !ok || p == nil {
-		return nil, errs.New(commerceerr.CodeForbidden, "missing principal", nil)
+		return nil, commerceerr.Forbidden()
 	}
 
 	siteKey := req.SiteKey

@@ -6,9 +6,8 @@ import (
 	"strings"
 	"time"
 
-	foundationauth "github.com/yueli-official/foundation/go/auth"
-	"platform/gokit/errs"
 	"github.com/yueli-official/commerce/paykit"
+	foundationauth "github.com/yueli-official/foundation/go/auth"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/model"
@@ -126,11 +125,11 @@ func (c *AdminOrder) RefundOrder(ctx context.Context, req *v1.AdminOrderRefundRe
 	}
 	out, err := gw.Refund(ctx, refundInput)
 	if err != nil {
-		return nil, errs.New(commerceerr.CodeGatewayFailed, "payment gateway error", nil)
+		return nil, commerceerr.GatewayFailed("payment gateway error")
 	}
 	out, err = paykit.NormalizeRefundResult(refundInput, out)
 	if err != nil {
-		return nil, errs.New(commerceerr.CodeGatewayFailed, "invalid payment gateway response", nil)
+		return nil, commerceerr.GatewayFailed("invalid payment gateway response")
 	}
 	status, ok := recoveryRefundStatus(out)
 	if !ok {

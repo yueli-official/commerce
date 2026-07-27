@@ -8,7 +8,6 @@ import (
 	"github.com/yueli-official/commerce/paykit"
 	foundationauth "github.com/yueli-official/foundation/go/auth"
 	"github.com/yueli-official/foundation/go/capability"
-	"platform/gokit/ghttpx"
 	"platform/services/commerce/internal/controller"
 	"platform/services/commerce/internal/dao"
 	"platform/services/commerce/internal/paymentcap"
@@ -70,8 +69,8 @@ func devPaymentMethodOption(enabled bool) service.Option {
 
 // Configure mounts the commerce-service routes onto s.
 func Configure(s *ghttp.Server, d Deps) {
-	apiMiddleware := ghttpx.NewMiddleware(ghttpx.MustRateLimiterFromEnvironment(), ghttpx.ForwardedClientIPKey)
-	s.Use(ghttpx.TraceRouteMiddleware)
+	apiMiddleware := commerceruntime.MustAPIMiddleware(commerceruntime.MustRateLimiterFromEnvironment()).Handle
+	s.Use(commerceruntime.TraceRouteMiddleware)
 	svc := d.Service
 	if svc == nil {
 		svc = NewService(d)

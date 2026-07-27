@@ -2,11 +2,9 @@ package controller
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	foundationauth "github.com/yueli-official/foundation/go/auth"
-	"platform/gokit/errs"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/sitecontext"
@@ -74,8 +72,8 @@ func TestRequireAdminAcceptsOnlyTrustedSiteOrLegacyAdmin(t *testing.T) {
 				}
 				return
 			}
-			var coded *errs.Coded
-			if !errors.As(err, &coded) || coded.Code != commerceerr.CodeForbidden {
+			value, ok := commerceerr.Resolve(err)
+			if !ok || value.Code != commerceerr.CodeForbidden {
 				t.Fatalf("requireAdmin() error = %v, want %s", err, commerceerr.CodeForbidden)
 			}
 		})

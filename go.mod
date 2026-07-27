@@ -9,7 +9,6 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.10.9
 	github.com/yueli-official/commerce/paykit v0.0.0
-	platform/gokit v0.0.0
 )
 
 require (
@@ -66,7 +65,5 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace platform/gokit => ../../packages/go/gokit
 
 replace github.com/yueli-official/commerce/paykit => ../../packages/go/paykit

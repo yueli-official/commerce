@@ -4,7 +4,6 @@ import (
 	"context"
 
 	foundationauth "github.com/yueli-official/foundation/go/auth"
-	"platform/gokit/errs"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/service"
@@ -22,7 +21,7 @@ func NewCheckin(svc *service.Service) *Checkin { return &Checkin{svc: svc} }
 func (c *Checkin) Do(ctx context.Context, _ *v1.CheckinReq) (*v1.CheckinRes, error) {
 	p, ok := foundationauth.FromContext(ctx)
 	if !ok || p == nil {
-		return nil, errs.New(commerceerr.CodeForbidden, "missing principal", nil)
+		return nil, commerceerr.Forbidden()
 	}
 	r, err := c.svc.Checkin(ctx, p.Subject)
 	if err != nil {
@@ -38,7 +37,7 @@ func (c *Checkin) Do(ctx context.Context, _ *v1.CheckinReq) (*v1.CheckinRes, err
 func (c *Checkin) Status(ctx context.Context, _ *v1.CheckinStatusReq) (*v1.CheckinStatusRes, error) {
 	p, ok := foundationauth.FromContext(ctx)
 	if !ok || p == nil {
-		return nil, errs.New(commerceerr.CodeForbidden, "missing principal", nil)
+		return nil, commerceerr.Forbidden()
 	}
 	st, err := c.svc.CheckinStatus(ctx, p.Subject)
 	if err != nil {

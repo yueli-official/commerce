@@ -8,9 +8,8 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 
-	foundationauth "github.com/yueli-official/foundation/go/auth"
-	"platform/gokit/errs"
 	"github.com/yueli-official/commerce/paykit"
+	foundationauth "github.com/yueli-official/foundation/go/auth"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/model"
@@ -116,7 +115,7 @@ func (c *Checkout) CreateCheckout(ctx context.Context, req *v1.CreateCheckoutReq
 		g.Log().Errorf(ctx, "checkout CreatePayment failed for order %s provider %s: %+v", order.OrderNo, provider, err)
 		recordPaymentFailure(ctx, c.svc, order, provider, "create_payment", "", err.Error())
 		cancelBestEffort(ctx, c.svc, order.OrderNo)
-		return nil, errs.New(commerceerr.CodeGatewayFailed, "payment gateway error", nil)
+		return nil, commerceerr.GatewayFailed("payment gateway error")
 	}
 	if payment.SessionID != "" {
 		if err := c.svc.SetCheckoutPaymentSession(ctx, order.OrderNo, payment.SessionID); err != nil {
@@ -199,7 +198,7 @@ func (c *Checkout) CaptureCheckout(ctx context.Context, req *v1.CaptureCheckoutR
 	})
 	if err != nil {
 		c.recordCaptureFailure(ctx, order, req, "", err.Error())
-		return nil, errs.New(commerceerr.CodeGatewayFailed, "payment gateway error", nil)
+		return nil, commerceerr.GatewayFailed("payment gateway error")
 	}
 	if !capture.Success {
 		c.recordCaptureFailure(ctx, order, req, capture.ProviderTxID, "payment capture failed")
@@ -267,7 +266,7 @@ func (c *Checkout) SyncCheckout(ctx context.Context, req *v1.SyncCheckoutReq) (*
 			return nil, commerceerr.InvalidRequest("payment provider does not support payment query")
 		}
 		recordPaymentFailure(ctx, c.svc, order, order.PaymentProvider, "query", "", err.Error())
-		return nil, errs.New(commerceerr.CodeGatewayFailed, "payment gateway error", nil)
+		return nil, commerceerr.GatewayFailed("payment gateway error")
 	}
 	status, err = c.svc.CheckoutStatus(ctx, req.OrderNo, buyerSub, req.BuyerEmail)
 	if err != nil {

@@ -9,7 +9,7 @@ import (
 
 	foundationauth "github.com/yueli-official/foundation/go/auth"
 	"github.com/yueli-official/foundation/go/capability"
-	"platform/gokit/ghttpx"
+	"github.com/yueli-official/foundation/go/goframe/ratelimit"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/paymentcap"
@@ -22,7 +22,7 @@ type Capability struct {
 	metadata      capability.ServiceMetadata
 	readScope     string
 	probeScope    string
-	healthLimiter *ghttpx.RateLimiter
+	healthLimiter *ratelimit.Limiter
 }
 
 func NewCapability(service *service.Service, registry *paymentcap.Registry, metadata capability.ServiceMetadata, readScope, probeScope string) *Capability {
@@ -32,7 +32,11 @@ func NewCapability(service *service.Service, registry *paymentcap.Registry, meta
 	if strings.TrimSpace(probeScope) == "" {
 		probeScope = "platform:capabilities:probe"
 	}
-	return &Capability{service: service, registry: registry, metadata: metadata, readScope: strings.TrimSpace(readScope), probeScope: strings.TrimSpace(probeScope), healthLimiter: ghttpx.NewRateLimiter(5, time.Minute)}
+	return &Capability{
+		service: service, registry: registry, metadata: metadata,
+		readScope: strings.TrimSpace(readScope), probeScope: strings.TrimSpace(probeScope),
+		healthLimiter: ratelimit.MustNew(ratelimit.Policy{Limit: 5, Window: time.Minute}),
+	}
 }
 
 func (controller *Capability) Capabilities(ctx context.Context, _ *v1.AdminCapabilitiesReq) (*v1.AdminCapabilitiesRes, error) {

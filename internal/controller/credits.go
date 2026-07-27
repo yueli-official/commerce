@@ -5,7 +5,6 @@ import (
 	"time"
 
 	foundationauth "github.com/yueli-official/foundation/go/auth"
-	"platform/gokit/errs"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/service"
@@ -23,7 +22,7 @@ func NewCredits(svc *service.Service) *Credits { return &Credits{svc: svc} }
 func (c *Credits) Balance(ctx context.Context, _ *v1.BalanceReq) (*v1.BalanceRes, error) {
 	p, ok := foundationauth.FromContext(ctx)
 	if !ok || p == nil {
-		return nil, errs.New(commerceerr.CodeForbidden, "missing principal", nil)
+		return nil, commerceerr.Forbidden()
 	}
 	bal, err := c.svc.Balance(ctx, p.Subject)
 	if err != nil {
@@ -36,7 +35,7 @@ func (c *Credits) Balance(ctx context.Context, _ *v1.BalanceReq) (*v1.BalanceRes
 func (c *Credits) Ledger(ctx context.Context, req *v1.LedgerReq) (*v1.LedgerRes, error) {
 	p, ok := foundationauth.FromContext(ctx)
 	if !ok || p == nil {
-		return nil, errs.New(commerceerr.CodeForbidden, "missing principal", nil)
+		return nil, commerceerr.Forbidden()
 	}
 	page, size := req.Page, req.Size
 	if page <= 0 {

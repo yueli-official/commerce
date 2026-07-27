@@ -4,6 +4,7 @@
 
 - `auth.go`：组合 Foundation JWKS source、token verifier 与 GoFrame 认证中间件；
 - `health.go`：组合 PostgreSQL readiness 与 Foundation health runner；
+- `http.go`：组合 Foundation Problem/GoFrame 中间件与进程限流策略；
 - `openapi.go`：处理显式 OpenAPI 导出；
 - `postgres.go`：从 Commerce 的 GoFrame 配置创建标准 PostgreSQL 连接；
 - `telemetry.go`：读取 Commerce 运行环境并组装 Foundation telemetry provider；
