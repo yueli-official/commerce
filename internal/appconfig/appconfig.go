@@ -12,15 +12,15 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 
-	"github.com/yueli-official/foundation/go/capability"
-	"github.com/yueli-official/notification/client"
-	"github.com/yueli-official/commerce/paykit"
 	"github.com/yueli-official/commerce/internal/assetclient"
 	"github.com/yueli-official/commerce/internal/deliveryrecovery"
 	"github.com/yueli-official/commerce/internal/paymentcap"
 	"github.com/yueli-official/commerce/internal/service"
 	"github.com/yueli-official/commerce/internal/shopclient"
 	"github.com/yueli-official/commerce/internal/sitecontext"
+	"github.com/yueli-official/commerce/paykit"
+	"github.com/yueli-official/foundation/go/capability"
+	"github.com/yueli-official/notification/client"
 )
 
 // JWKS holds the IdP key/issuer config for the Foundation auth verifier.
@@ -34,8 +34,16 @@ type JWKS struct {
 // LoadJWKS reads commerce.jwks.* from the GoFrame config.
 func LoadJWKS(ctx context.Context) JWKS {
 	return JWKS{
-		URL:               g.Cfg().MustGet(ctx, "commerce.jwks.url").String(),
-		Issuer:            g.Cfg().MustGet(ctx, "commerce.jwks.issuer").String(),
+		URL: dependencyEndpoint(
+			"IDENTITY_BASE_URL",
+			g.Cfg().MustGet(ctx, "commerce.jwks.url").String(),
+			"/oauth2/jwks.json",
+		),
+		Issuer: dependencyEndpoint(
+			"IDENTITY_BASE_URL",
+			g.Cfg().MustGet(ctx, "commerce.jwks.issuer").String(),
+			"",
+		),
 		Audience:          g.Cfg().MustGet(ctx, "commerce.jwks.audience").String(),
 		AllowLoopbackHTTP: g.Cfg().MustGet(ctx, "commerce.jwks.allowLoopbackHttp", false).Bool(),
 	}
@@ -65,8 +73,16 @@ func LoadDelivery(ctx context.Context) service.DeliveryConfig {
 // sends a scene notification; provider/channel details live in notification.
 func BuildDeliveryMailer(ctx context.Context) service.DeliveryMailer {
 	cfg := notificationclient.Config{
-		BaseURL:      g.Cfg().MustGet(ctx, "commerce.notificationService.base_url").String(),
-		TokenURL:     g.Cfg().MustGet(ctx, "commerce.notificationService.token_url").String(),
+		BaseURL: dependencyEndpoint(
+			"NOTIFICATION_BASE_URL",
+			g.Cfg().MustGet(ctx, "commerce.notificationService.base_url").String(),
+			"",
+		),
+		TokenURL: dependencyEndpoint(
+			"IDENTITY_BASE_URL",
+			g.Cfg().MustGet(ctx, "commerce.notificationService.token_url").String(),
+			"/oauth2/token",
+		),
 		ClientID:     g.Cfg().MustGet(ctx, "commerce.notificationService.client_id").String(),
 		ClientSecret: g.Cfg().MustGet(ctx, "commerce.notificationService.client_secret").String(),
 		Scope:        g.Cfg().MustGet(ctx, "commerce.notificationService.scope", "notification:send").String(),
@@ -121,8 +137,16 @@ func BuildRecoveryNotifier(ctx context.Context) deliveryrecovery.FailureNotifier
 		return nil
 	}
 	cfg := notificationclient.Config{
-		BaseURL:      g.Cfg().MustGet(ctx, "commerce.notificationService.base_url").String(),
-		TokenURL:     g.Cfg().MustGet(ctx, "commerce.notificationService.token_url").String(),
+		BaseURL: dependencyEndpoint(
+			"NOTIFICATION_BASE_URL",
+			g.Cfg().MustGet(ctx, "commerce.notificationService.base_url").String(),
+			"",
+		),
+		TokenURL: dependencyEndpoint(
+			"IDENTITY_BASE_URL",
+			g.Cfg().MustGet(ctx, "commerce.notificationService.token_url").String(),
+			"/oauth2/token",
+		),
 		ClientID:     g.Cfg().MustGet(ctx, "commerce.notificationService.client_id").String(),
 		ClientSecret: g.Cfg().MustGet(ctx, "commerce.notificationService.client_secret").String(),
 		Scope:        g.Cfg().MustGet(ctx, "commerce.notificationService.scope", "notification:send").String(),
@@ -185,8 +209,16 @@ func (a assetDeliveryAdapter) RevokeDelivery(ctx context.Context, grantID string
 
 func BuildAssetDeliveryClient(ctx context.Context) service.AssetDeliveryClient {
 	cfg := assetclient.Config{
-		BaseURL:      g.Cfg().MustGet(ctx, "commerce.assetService.base_url").String(),
-		TokenURL:     g.Cfg().MustGet(ctx, "commerce.assetService.token_url").String(),
+		BaseURL: dependencyEndpoint(
+			"ASSET_BASE_URL",
+			g.Cfg().MustGet(ctx, "commerce.assetService.base_url").String(),
+			"",
+		),
+		TokenURL: dependencyEndpoint(
+			"IDENTITY_BASE_URL",
+			g.Cfg().MustGet(ctx, "commerce.assetService.token_url").String(),
+			"/oauth2/token",
+		),
 		ClientID:     g.Cfg().MustGet(ctx, "commerce.assetService.client_id").String(),
 		ClientSecret: g.Cfg().MustGet(ctx, "commerce.assetService.client_secret").String(),
 		Scope:        g.Cfg().MustGet(ctx, "commerce.assetService.scope", "asset:sign").String(),
@@ -437,6 +469,14 @@ func CapabilityScope(ctx context.Context) string {
 
 func CapabilityProbeScope(ctx context.Context) string {
 	return g.Cfg().MustGet(ctx, "commerce.capabilityProbeScope", "platform:capabilities:probe").String()
+}
+
+func dependencyEndpoint(envName, fallback, suffix string) string {
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv(envName)), "/")
+	if base == "" {
+		return strings.TrimSpace(fallback)
+	}
+	return base + suffix
 }
 
 func envOrAny(keys []string, fallback string) string {

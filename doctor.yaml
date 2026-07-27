@@ -1,0 +1,49 @@
+apiVersion: doctor.yueli.dev/v1
+kind: Repository
+metadata:
+  name: commerce
+  class: business-service
+
+toolchains:
+  - { name: go, version: 1.25.12 }
+
+dependencies:
+  - name: identity
+    capability: identity.oidc
+    version: ">=1.0"
+    urlEnv: IDENTITY_BASE_URL
+  - name: asset
+    capability: asset.api
+    version: ">=1.0"
+    urlEnv: ASSET_BASE_URL
+  - name: notification
+    capability: notification.email
+    version: ">=1.0"
+    urlEnv: NOTIFICATION_BASE_URL
+    optional: true
+
+configuration:
+  - name: runtime
+    path: manifest/config/config.yaml
+    example: manifest/config/config.example.yaml
+
+migrations:
+  - name: commerce-db
+    engine: postgres
+    directory: manifest/sql/migrations
+    databaseUrlEnv: COMMERCE_DATABASE_URL
+
+tasks:
+  - name: error-catalog
+    phase: check
+    command: [go, run, ./cmd/errorcatalog, --check]
+  - name: unit
+    phase: test
+    command: [go, test, ./...]
+
+processes:
+  - name: commerce
+    command: [go, run, ./cmd/commerce]
+    health:
+      url: http://127.0.0.1:8084/readyz
+      timeout: 5m

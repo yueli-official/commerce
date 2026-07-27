@@ -1,3 +1,5 @@
 /commerce
 /commerce.exe
 *.exe
+.doctor/
+/manifest/config/config.yaml

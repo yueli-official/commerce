@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "commerce.yueli.dev/error-catalog/v1",
+  "errors": [
+    {
+      "code": "commerce.capability_not_found",
+      "status": 404
+    },
+    {
+      "code": "commerce.forbidden",
+      "status": 403
+    },
+    {
+      "code": "commerce.gateway_failed",
+      "status": 502
+    },
+    {
+      "code": "commerce.health_check_rate_limited",
+      "status": 429
+    },
+    {
+      "code": "commerce.insufficient_points",
+      "status": 402
+    },
+    {
+      "code": "commerce.invalid_request",
+      "status": 400
+    },
+    {
+      "code": "commerce.notify_invalid",
+      "status": 400
+    },
+    {
+      "code": "commerce.order_invalid_state",
+      "status": 409
+    },
+    {
+      "code": "commerce.order_not_found",
+      "status": 404
+    },
+    {
+      "code": "commerce.product_not_found",
+      "status": 404
+    },
+    {
+      "code": "commerce.provider_not_found",
+      "status": 404
+    }
+  ]
+}

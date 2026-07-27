@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yueli-official/foundation/go/capability"
-	"github.com/yueli-official/notification/client"
-	"github.com/yueli-official/commerce/paykit"
-	paydev "github.com/yueli-official/commerce/paykit/providers/dev"
 	"github.com/yueli-official/commerce/internal/paymentcap"
 	"github.com/yueli-official/commerce/internal/service"
+	"github.com/yueli-official/commerce/paykit"
+	paydev "github.com/yueli-official/commerce/paykit/providers/dev"
+	"github.com/yueli-official/foundation/go/capability"
+	"github.com/yueli-official/notification/client"
 )
 
 func TestNotificationDeliverySenderSwallowsProviderFailure(t *testing.T) {
@@ -48,6 +48,20 @@ func TestNotificationDeliverySenderSwallowsProviderFailure(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("SendDelivery returned error: %v", err)
+	}
+}
+
+func TestDependencyEndpointUsesDoctorProviderBaseURL(t *testing.T) {
+	t.Setenv("IDENTITY_BASE_URL", "http://127.0.0.1:8081/")
+
+	if got := dependencyEndpoint("IDENTITY_BASE_URL", "https://configured.example/jwks", "/oauth2/jwks.json"); got != "http://127.0.0.1:8081/oauth2/jwks.json" {
+		t.Fatalf("JWKS endpoint = %q", got)
+	}
+	if got := dependencyEndpoint("IDENTITY_BASE_URL", "https://configured.example", ""); got != "http://127.0.0.1:8081" {
+		t.Fatalf("issuer = %q", got)
+	}
+	if got := dependencyEndpoint("MISSING_PROVIDER_URL", " https://configured.example/api ", ""); got != "https://configured.example/api" {
+		t.Fatalf("fallback = %q", got)
 	}
 }
 
