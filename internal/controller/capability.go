@@ -8,7 +8,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	foundationauth "github.com/yueli-official/foundation/go/auth"
-	"platform/gokit/capability"
+	"github.com/yueli-official/foundation/go/capability"
 	"platform/gokit/ghttpx"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"

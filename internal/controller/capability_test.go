@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	foundationauth "github.com/yueli-official/foundation/go/auth"
-	"platform/gokit/capability"
+	"github.com/yueli-official/foundation/go/capability"
 )
 
 func TestCapabilityReadAuthorizationAcceptsAdminOrReadScope(t *testing.T) {

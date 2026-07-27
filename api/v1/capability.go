@@ -3,7 +3,7 @@ package v1
 import (
 	"github.com/gogf/gf/v2/frame/g"
 
-	"platform/gokit/capability"
+	"github.com/yueli-official/foundation/go/capability"
 )
 
 type AdminCapabilitiesReq struct {
