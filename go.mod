@@ -8,8 +8,8 @@ require (
 	github.com/gogf/gf/v2 v2.10.2
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.10.9
+	github.com/yueli-official/commerce/paykit v0.0.0
 	platform/gokit v0.0.0
-	platform/paykit v0.0.0
 )
 
 require (
@@ -69,4 +69,4 @@ require (
 
 replace platform/gokit => ../../packages/go/gokit
 
-replace platform/paykit => ../../packages/go/paykit
+replace github.com/yueli-official/commerce/paykit => ../../packages/go/paykit

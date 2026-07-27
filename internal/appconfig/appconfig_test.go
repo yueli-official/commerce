@@ -10,8 +10,8 @@ import (
 
 	"github.com/yueli-official/foundation/go/capability"
 	"github.com/yueli-official/notification/client"
-	"platform/paykit"
-	paydev "platform/paykit/providers/dev"
+	"github.com/yueli-official/commerce/paykit"
+	paydev "github.com/yueli-official/commerce/paykit/providers/dev"
 	"platform/services/commerce/internal/paymentcap"
 	"platform/services/commerce/internal/service"
 )

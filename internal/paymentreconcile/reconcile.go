@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"platform/paykit"
+	"github.com/yueli-official/commerce/paykit"
 	"platform/services/commerce/internal/model"
 	"platform/services/commerce/internal/paymentrecovery"
 	"platform/services/commerce/internal/service"

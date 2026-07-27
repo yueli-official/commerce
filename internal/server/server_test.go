@@ -35,7 +35,7 @@ import (
 
 	foundationauth "github.com/yueli-official/foundation/go/auth"
 	"platform/gokit/authsetup"
-	"platform/paykit"
+	"github.com/yueli-official/commerce/paykit"
 	"platform/services/commerce/internal/dao"
 	"platform/services/commerce/internal/model"
 	"platform/services/commerce/internal/server"

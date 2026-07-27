@@ -3,7 +3,7 @@ package controller
 import (
 	"context"
 
-	"platform/paykit"
+	"github.com/yueli-official/commerce/paykit"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/service"
 )

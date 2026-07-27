@@ -7,7 +7,7 @@ import (
 
 	"github.com/gogf/gf/v2/net/ghttp"
 
-	"platform/paykit"
+	"github.com/yueli-official/commerce/paykit"
 	"platform/services/commerce/internal/paymentrecovery"
 	"platform/services/commerce/internal/service"
 )

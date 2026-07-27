@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"platform/paykit"
+	"github.com/yueli-official/commerce/paykit"
 	"platform/services/commerce/internal/model"
 	"platform/services/commerce/internal/paymentreconcile"
 	"platform/services/commerce/internal/paymentrecovery"

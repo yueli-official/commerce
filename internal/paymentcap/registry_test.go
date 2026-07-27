@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/yueli-official/foundation/go/capability"
-	"platform/paykit"
+	"github.com/yueli-official/commerce/paykit"
 )
 
 type healthGateway struct {

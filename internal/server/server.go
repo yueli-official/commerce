@@ -10,7 +10,7 @@ import (
 	"platform/gokit/authhttp"
 	"platform/gokit/ghttpx"
 	"platform/gokit/healthcheck"
-	"platform/paykit"
+	"github.com/yueli-official/commerce/paykit"
 	"platform/services/commerce/internal/controller"
 	"platform/services/commerce/internal/dao"
 	"platform/services/commerce/internal/paymentcap"

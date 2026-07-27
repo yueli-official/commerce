@@ -10,7 +10,7 @@ import (
 
 	foundationauth "github.com/yueli-official/foundation/go/auth"
 	"platform/gokit/errs"
-	"platform/paykit"
+	"github.com/yueli-official/commerce/paykit"
 	v1 "platform/services/commerce/api/v1"
 	"platform/services/commerce/internal/commerceerr"
 	"platform/services/commerce/internal/model"

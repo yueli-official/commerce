@@ -14,7 +14,7 @@ import (
 
 	"github.com/yueli-official/foundation/go/capability"
 	"github.com/yueli-official/notification/client"
-	"platform/paykit"
+	"github.com/yueli-official/commerce/paykit"
 	"platform/services/commerce/internal/assetclient"
 	"platform/services/commerce/internal/deliveryrecovery"
 	"platform/services/commerce/internal/paymentcap"

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"platform/paykit"
+	"github.com/yueli-official/commerce/paykit"
 	"platform/services/commerce/internal/appconfig"
 )
 
@@ -91,7 +91,7 @@ func TestBuildGatewayRegistryUsesPaykitProviderPackages(t *testing.T) {
 	if typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
 	}
-	if got, want := typ.PkgPath(), "platform/paykit/providers/paypal"; got != want {
+	if got, want := typ.PkgPath(), "github.com/yueli-official/commerce/paykit/providers/paypal"; got != want {
 		t.Fatalf("paypal provider package = %q, want %q", got, want)
 	}
 }
