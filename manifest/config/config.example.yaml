@@ -33,7 +33,7 @@ commerce:
     audience: "commerce-api"
     allowLoopbackHttp: true # local development only; keep false for deployed environments
 
-  devSettle: false          # true → auto-settle orders without real payment (dev only)
+  devSettle: true           # local-only: exposes the explicit "dev" adapter and settle endpoint
   gateways: [alipay, wechat, paypal]
 
   # Daily check-in reward curve (M2): points for an N-day streak =

@@ -258,6 +258,10 @@ type deliveryAccessRulesResult struct {
 const reusableCheckoutWindow = 10 * time.Minute
 
 var paymentMethodDefinitions = map[string]PaymentMethodConfig{
+	"dev": {
+		Provider: "dev", Label: "本地模拟支付", Method: "redirect", Enabled: true, SortOrder: 1,
+		Description: "Local development checkout simulation",
+	},
 	"alipay": {
 		Provider: "alipay", Label: "Alipay", Method: "redirect", SortOrder: 10,
 		Description: "Page redirect checkout",
@@ -316,16 +320,23 @@ func WithWebhookPublisher(publisher TransactionalWebhookPublisher) Option {
 	}
 }
 
+func WithDevPaymentMethod() Option {
+	return func(service *Service) {
+		service.devPaymentMethod = true
+	}
+}
+
 // Service holds the DAO and implements the commerce domain logic.
 type Service struct {
-	db              *dao.PG
-	checkin         CheckinConfig
-	delivery        DeliveryConfig
-	mailer          DeliveryMailer
-	assetDelivery   AssetDeliveryClient
-	currentDelivery CurrentDeliveryResolver
-	currentCheckout CurrentCheckoutItemResolver
-	webhooks        TransactionalWebhookPublisher
+	db               *dao.PG
+	checkin          CheckinConfig
+	delivery         DeliveryConfig
+	mailer           DeliveryMailer
+	assetDelivery    AssetDeliveryClient
+	currentDelivery  CurrentDeliveryResolver
+	currentCheckout  CurrentCheckoutItemResolver
+	webhooks         TransactionalWebhookPublisher
+	devPaymentMethod bool
 }
 
 // New constructs a Service.
@@ -1217,8 +1228,12 @@ func (s *Service) PaymentMethods(ctx context.Context) ([]PaymentMethodConfig, er
 		}
 		byProvider[strings.TrimSpace(row.Provider)] = row
 	}
-	methods := make([]PaymentMethodConfig, 0, len(paymentMethodOrder))
-	for _, provider := range paymentMethodOrder {
+	order := paymentMethodOrder
+	if s.devPaymentMethod {
+		order = append([]string{"dev"}, order...)
+	}
+	methods := make([]PaymentMethodConfig, 0, len(order))
+	for _, provider := range order {
 		def := paymentMethodDefinitions[provider]
 		if row := byProvider[provider]; row != nil {
 			def.Enabled = row.Enabled
@@ -1260,6 +1275,9 @@ func (s *Service) SavePaymentMethods(ctx context.Context, inputs []PaymentMethod
 	for _, input := range inputs {
 		provider := strings.TrimSpace(input.Provider)
 		def, ok := paymentMethodDefinitions[provider]
+		if provider == "dev" && !s.devPaymentMethod {
+			ok = false
+		}
 		if !ok {
 			return nil, commerceerr.InvalidRequest("unsupported payment provider")
 		}

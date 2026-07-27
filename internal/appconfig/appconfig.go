@@ -391,7 +391,7 @@ func BuildPaymentCapabilityRegistry(registry paykit.Registry, alipay Alipay, pay
 	if strings.TrimSpace(paypal.WebhookID) != "" {
 		paypalOperations = append(paypalOperations, "dispute")
 	}
-	return paymentcap.New(
+	definitions := []paymentcap.Definition{
 		paymentcap.Definition{
 			Instance: "alipay-primary", Adapter: "alipay", Mode: mode(alipay.Sandbox), Gateway: alipayGateway,
 			Operations: []string{"notify", "query", "redirect"}, RequiredConfig: []capability.ConfigField{
@@ -413,7 +413,14 @@ func BuildPaymentCapabilityRegistry(registry paykit.Registry, alipay Alipay, pay
 				field("app_id", wechat.AppID, false), field("notify_url", wechat.NotifyURL, false),
 			},
 		},
-	)
+	}
+	if devGateway := gateway("dev"); devGateway != nil {
+		definitions = append(definitions, paymentcap.Definition{
+			Instance: "dev-local", Adapter: "dev", Mode: "local", Gateway: devGateway,
+			Operations: []string{"redirect", "refund"},
+		})
+	}
+	return paymentcap.New(definitions...)
 }
 
 func CapabilityServiceMetadata() capability.ServiceMetadata {

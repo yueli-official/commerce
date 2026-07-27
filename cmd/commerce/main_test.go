@@ -10,6 +10,7 @@ import (
 
 func TestBuildGatewayRegistryDoesNotRegisterStubsForDevSettle(t *testing.T) {
 	reg, err := buildGatewayRegistry(
+		false,
 		appconfig.Alipay{},
 		appconfig.PayPal{},
 		appconfig.WeChat{},
@@ -22,8 +23,31 @@ func TestBuildGatewayRegistryDoesNotRegisterStubsForDevSettle(t *testing.T) {
 	}
 }
 
+func TestBuildGatewayRegistryRegistersExplicitDevProvider(t *testing.T) {
+	reg, err := buildGatewayRegistry(
+		true,
+		appconfig.Alipay{},
+		appconfig.PayPal{},
+		appconfig.WeChat{},
+	)
+	if err != nil {
+		t.Fatalf("buildGatewayRegistry: %v", err)
+	}
+	provider, ok := reg.Get("dev")
+	if !ok {
+		t.Fatal("explicit dev gateway was not registered")
+	}
+	if provider.Name() != "dev" {
+		t.Fatalf("provider name = %q", provider.Name())
+	}
+	if _, exists := reg["alipay"]; exists {
+		t.Fatal("dev mode registered a fake real-provider adapter")
+	}
+}
+
 func TestBuildGatewayRegistryRegistersConfiguredPayPal(t *testing.T) {
 	reg, err := buildGatewayRegistry(
+		false,
 		appconfig.Alipay{},
 		appconfig.PayPal{ClientID: "client", ClientSecret: "secret", Sandbox: true},
 		appconfig.WeChat{},
@@ -38,6 +62,7 @@ func TestBuildGatewayRegistryRegistersConfiguredPayPal(t *testing.T) {
 
 func TestBuildGatewayRegistryReturnsPaykitRegistry(t *testing.T) {
 	reg, err := buildGatewayRegistry(
+		false,
 		appconfig.Alipay{},
 		appconfig.PayPal{},
 		appconfig.WeChat{},
@@ -50,6 +75,7 @@ func TestBuildGatewayRegistryReturnsPaykitRegistry(t *testing.T) {
 
 func TestBuildGatewayRegistryUsesPaykitProviderPackages(t *testing.T) {
 	reg, err := buildGatewayRegistry(
+		false,
 		appconfig.Alipay{},
 		appconfig.PayPal{ClientID: "client", ClientSecret: "secret", Sandbox: true},
 		appconfig.WeChat{},

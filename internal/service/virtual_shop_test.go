@@ -327,6 +327,39 @@ func TestPaymentMethodConfigControlsCheckoutCreation(t *testing.T) {
 	}
 }
 
+func TestDevPaymentMethodOnlyExistsWhenExplicitlyConfigured(t *testing.T) {
+	svc, _, ctx := newSvc(t)
+	methods, err := svc.PaymentMethods(ctx)
+	if err != nil {
+		t.Fatalf("PaymentMethods default: %v", err)
+	}
+	for _, method := range methods {
+		if method.Provider == "dev" {
+			t.Fatal("dev payment method leaked into the default service")
+		}
+	}
+
+	devSvc, pg, _ := newSvc(t)
+	devSvc = service.New(
+		pg,
+		service.CheckinConfig{},
+		service.WithDevPaymentMethod(),
+	)
+	methods, err = devSvc.PaymentMethods(ctx)
+	if err != nil {
+		t.Fatalf("PaymentMethods dev: %v", err)
+	}
+	for _, method := range methods {
+		if method.Provider == "dev" {
+			if !method.Enabled || method.Method != "redirect" {
+				t.Fatalf("dev payment method = %+v", method)
+			}
+			return
+		}
+	}
+	t.Fatal("explicit dev payment method is missing")
+}
+
 func TestUserCheckoutGrantsEntitlementOnSettle(t *testing.T) {
 	svc, pg, ctx := newSvc(t)
 	sub := uid("buyer-sub")

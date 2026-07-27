@@ -25,6 +25,7 @@ import (
 	"platform/gokit/webhooksetup"
 	"platform/paykit"
 	payalipay "platform/paykit/providers/alipay"
+	paydev "platform/paykit/providers/dev"
 	paypal "platform/paykit/providers/paypal"
 	wechat "platform/paykit/providers/wechat"
 	"platform/services/commerce/internal/appconfig"
@@ -59,7 +60,8 @@ func main() {
 		paypalCfg = appconfig.LoadPayPal(ctx)
 		wechatCfg = appconfig.LoadWeChat(ctx)
 	)
-	reg, err := buildGatewayRegistry(alipayCfg, paypalCfg, wechatCfg)
+	devSettle := g.Cfg().MustGet(ctx, "commerce.devSettle").Bool()
+	reg, err := buildGatewayRegistry(devSettle, alipayCfg, paypalCfg, wechatCfg)
 	if err != nil {
 		panic(err)
 	}
@@ -68,7 +70,6 @@ func main() {
 		panic(err)
 	}
 
-	devSettle := g.Cfg().MustGet(ctx, "commerce.devSettle").Bool()
 	// Prod-safety guard: devSettle backdoor must never reach a real Alipay endpoint.
 	if devSettle {
 		if alipayCfg.AppID != "" && !alipayCfg.Sandbox {
@@ -241,8 +242,13 @@ func main() {
 	s.Run()
 }
 
-func buildGatewayRegistry(alipayCfg appconfig.Alipay, paypalCfg appconfig.PayPal, wechatCfg appconfig.WeChat) (paykit.Registry, error) {
+func buildGatewayRegistry(devSettle bool, alipayCfg appconfig.Alipay, paypalCfg appconfig.PayPal, wechatCfg appconfig.WeChat) (paykit.Registry, error) {
 	reg := paykit.NewRegistry()
+	if devSettle {
+		if err := reg.Register(paydev.NewProvider()); err != nil {
+			return nil, err
+		}
+	}
 	providerHTTPClient := observability.HTTPClient(&http.Client{Timeout: 15 * time.Second})
 	if alipayCfg.AppID != "" && alipayCfg.PrivateKey != "" {
 		alipayGW, err := payalipay.NewProvider(payalipay.Config{

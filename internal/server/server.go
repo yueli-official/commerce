@@ -58,7 +58,15 @@ func NewService(d Deps) *service.Service {
 		service.WithCurrentDeliveryResolver(d.CurrentDelivery),
 		service.WithCurrentCheckoutItemResolver(currentCheckout),
 		service.WithWebhookPublisher(d.Webhooks),
+		devPaymentMethodOption(d.DevSettle),
 	)
+}
+
+func devPaymentMethodOption(enabled bool) service.Option {
+	if enabled {
+		return service.WithDevPaymentMethod()
+	}
+	return func(*service.Service) {}
 }
 
 // Configure mounts the commerce-service routes onto s.

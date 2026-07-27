@@ -11,6 +11,8 @@ import (
 	"platform/gokit/capability"
 	"platform/gokit/notificationclient"
 	"platform/paykit"
+	paydev "platform/paykit/providers/dev"
+	"platform/services/commerce/internal/paymentcap"
 	"platform/services/commerce/internal/service"
 )
 
@@ -46,6 +48,31 @@ func TestNotificationDeliverySenderSwallowsProviderFailure(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("SendDelivery returned error: %v", err)
+	}
+}
+
+func TestBuildPaymentCapabilityRegistryIncludesRegisteredDevProvider(t *testing.T) {
+	gateways := paykit.NewRegistry()
+	if err := gateways.Register(paydev.NewProvider()); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := BuildPaymentCapabilityRegistry(gateways, Alipay{}, PayPal{}, WeChat{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := registry.Snapshot(
+		capability.ServiceMetadata{Name: "commerce", Version: "test", BuildSHA: "test", Deployment: "commerce-test"},
+		[]paymentcap.MethodState{{Provider: "dev", Enabled: true}},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, ok := snapshot.Provider("dev-local")
+	if !ok || !provider.Registered || provider.Mode != "local" ||
+		provider.Configuration != capability.ConfigurationComplete ||
+		provider.Enablement != capability.EnablementEnabled {
+		t.Fatalf("dev provider = %+v, present=%t", provider, ok)
 	}
 }
 
