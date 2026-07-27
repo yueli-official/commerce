@@ -23,7 +23,6 @@ import (
 	paydev "github.com/yueli-official/commerce/paykit/providers/dev"
 	paypal "github.com/yueli-official/commerce/paykit/providers/paypal"
 	wechat "github.com/yueli-official/commerce/paykit/providers/wechat"
-	"platform/gokit/webhooksetup"
 	"platform/services/commerce/internal/appconfig"
 	"platform/services/commerce/internal/commerceaudit"
 	"platform/services/commerce/internal/commercewebhook"
@@ -87,9 +86,9 @@ func main() {
 
 	db := dao.NewPG(g.DB())
 	exportingOpenAPI := commerceruntime.OpenAPIRequested()
-	var webhookRuntime *webhooksetup.Runtime
+	var webhookRuntime *commerceruntime.WebhookRuntime
 	if g.Cfg().MustGet(ctx, "commerce.webhook.enabled").Bool() {
-		masterKey, err := webhooksetup.DecodeMasterKey(
+		masterKey, err := commerceruntime.DecodeWebhookMasterKey(
 			g.Cfg().MustGet(ctx, "commerce.webhook.masterKey").String(),
 		)
 		if err != nil {
@@ -104,7 +103,7 @@ func main() {
 		if hostname, hostErr := os.Hostname(); hostErr == nil && hostname != "" {
 			workerID += ":" + hostname
 		}
-		webhookRuntime, err = webhooksetup.New(ctx, webhooksetup.Options{
+		webhookRuntime, err = commerceruntime.NewWebhook(ctx, commerceruntime.WebhookOptions{
 			DB: webhookDB, InstanceKey: "commerce:default",
 			Definition: commercewebhook.Definition("default"),
 			MasterKey:  masterKey, WorkerID: workerID,
