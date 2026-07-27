@@ -2,9 +2,9 @@ package service_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
+	"github.com/yueli-official/commerce/internal/commerceerr"
 	"github.com/yueli-official/commerce/internal/service"
 )
 
@@ -27,7 +27,8 @@ func TestCreateCheckoutRequiresCurrentCatalogResolver(t *testing.T) {
 	if err == nil {
 		t.Fatal("CreateCheckout without current catalog resolver returned nil error")
 	}
-	if !strings.Contains(err.Error(), "checkout catalog resolver is required") {
-		t.Fatalf("CreateCheckout error = %v, want checkout catalog resolver is required", err)
+	value, ok := commerceerr.Resolve(err)
+	if !ok || value.Code != commerceerr.CodeInvalidRequest {
+		t.Fatalf("CreateCheckout error = %v, want %s", err, commerceerr.CodeInvalidRequest)
 	}
 }
