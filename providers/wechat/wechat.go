@@ -22,7 +22,7 @@ import (
 	"github.com/wechatpay-apiv3/wechatpay-go/services/refunddomestic"
 	"github.com/wechatpay-apiv3/wechatpay-go/utils"
 
-	"platform/paykit"
+	"github.com/yueli-official/commerce/paykit"
 )
 
 type Config struct {

@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"platform/paykit"
+	"github.com/yueli-official/commerce/paykit"
 )
 
 type provider struct{}

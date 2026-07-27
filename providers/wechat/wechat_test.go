@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"platform/paykit"
+	"github.com/yueli-official/commerce/paykit"
 
 	wechatCore "github.com/wechatpay-apiv3/wechatpay-go/core"
 	"github.com/wechatpay-apiv3/wechatpay-go/services/payments"

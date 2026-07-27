@@ -6,8 +6,8 @@ import (
 	"net/url"
 	"testing"
 
-	"platform/paykit"
-	paydev "platform/paykit/providers/dev"
+	"github.com/yueli-official/commerce/paykit"
+	paydev "github.com/yueli-official/commerce/paykit/providers/dev"
 )
 
 func TestCreatePaymentReturnsLocalMockCheckout(t *testing.T) {

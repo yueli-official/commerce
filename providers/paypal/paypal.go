@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"platform/paykit"
+	"github.com/yueli-official/commerce/paykit"
 )
 
 const (

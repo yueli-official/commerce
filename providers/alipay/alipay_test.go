@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"platform/paykit"
-	"platform/paykit/providers/alipay"
+	"github.com/yueli-official/commerce/paykit"
+	"github.com/yueli-official/commerce/paykit/providers/alipay"
 )
 
 // generateTestRSAKey produces a throwaway RSA-2048 key pair for offline tests.

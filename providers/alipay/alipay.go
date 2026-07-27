@@ -11,7 +11,7 @@ import (
 
 	smartalipay "github.com/smartwalle/alipay/v3"
 
-	"platform/paykit"
+	"github.com/yueli-official/commerce/paykit"
 )
 
 // AlipayConfig holds the configuration fields read from the commerce.alipay

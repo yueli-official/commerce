@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"platform/paykit"
+	"github.com/yueli-official/commerce/paykit"
 )
 
 func TestPaymentQueryConformance(t *testing.T) {

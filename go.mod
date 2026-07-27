@@ -1,4 +1,4 @@
-module platform/paykit
+module github.com/yueli-official/commerce/paykit
 
 go 1.25.12
 

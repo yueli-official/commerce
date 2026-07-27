@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"platform/paykit"
-	"platform/paykit/providers/paypal"
+	"github.com/yueli-official/commerce/paykit"
+	"github.com/yueli-official/commerce/paykit/providers/paypal"
 )
 
 func TestPayPalCreatePaymentCreatesOrder(t *testing.T) {
