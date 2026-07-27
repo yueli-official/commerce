@@ -12,8 +12,8 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 
+	"github.com/yueli-official/notification/client"
 	"platform/gokit/capability"
-	"platform/gokit/notificationclient"
 	"platform/paykit"
 	"platform/services/commerce/internal/assetclient"
 	"platform/services/commerce/internal/deliveryrecovery"

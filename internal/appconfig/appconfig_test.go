@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yueli-official/notification/client"
 	"platform/gokit/capability"
-	"platform/gokit/notificationclient"
 	"platform/paykit"
 	paydev "platform/paykit/providers/dev"
 	"platform/services/commerce/internal/paymentcap"

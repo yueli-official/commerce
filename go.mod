@@ -40,6 +40,7 @@ require (
 	github.com/smartwalle/nsign v1.0.9 // indirect
 	github.com/wechatpay-apiv3/wechatpay-go v0.2.21 // indirect
 	github.com/yueli-official/foundation/go v0.0.0
+	github.com/yueli-official/notification v0.0.0
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.65.0 // indirect
 	go.opentelemetry.io/otel v1.40.0 // indirect
