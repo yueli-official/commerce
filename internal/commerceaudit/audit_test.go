@@ -5,7 +5,7 @@ import (
 
 	"github.com/yueli-official/foundation/go/audit"
 
-	"platform/services/commerce/internal/commerceaudit"
+	"github.com/yueli-official/commerce/internal/commerceaudit"
 )
 
 func TestDefinitionCompilesRecoveryActions(t *testing.T) {

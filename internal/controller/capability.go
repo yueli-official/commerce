@@ -10,10 +10,10 @@ import (
 	foundationauth "github.com/yueli-official/foundation/go/auth"
 	"github.com/yueli-official/foundation/go/capability"
 	"github.com/yueli-official/foundation/go/goframe/ratelimit"
-	v1 "platform/services/commerce/api/v1"
-	"platform/services/commerce/internal/commerceerr"
-	"platform/services/commerce/internal/paymentcap"
-	"platform/services/commerce/internal/service"
+	v1 "github.com/yueli-official/commerce/api/v1"
+	"github.com/yueli-official/commerce/internal/commerceerr"
+	"github.com/yueli-official/commerce/internal/paymentcap"
+	"github.com/yueli-official/commerce/internal/service"
 )
 
 type Capability struct {

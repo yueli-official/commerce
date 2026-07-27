@@ -15,12 +15,12 @@ import (
 	"github.com/yueli-official/foundation/go/capability"
 	"github.com/yueli-official/notification/client"
 	"github.com/yueli-official/commerce/paykit"
-	"platform/services/commerce/internal/assetclient"
-	"platform/services/commerce/internal/deliveryrecovery"
-	"platform/services/commerce/internal/paymentcap"
-	"platform/services/commerce/internal/service"
-	"platform/services/commerce/internal/shopclient"
-	"platform/services/commerce/internal/sitecontext"
+	"github.com/yueli-official/commerce/internal/assetclient"
+	"github.com/yueli-official/commerce/internal/deliveryrecovery"
+	"github.com/yueli-official/commerce/internal/paymentcap"
+	"github.com/yueli-official/commerce/internal/service"
+	"github.com/yueli-official/commerce/internal/shopclient"
+	"github.com/yueli-official/commerce/internal/sitecontext"
 )
 
 // JWKS holds the IdP key/issuer config for the Foundation auth verifier.

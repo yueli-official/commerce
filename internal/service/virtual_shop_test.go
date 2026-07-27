@@ -10,9 +10,9 @@ import (
 
 	"github.com/gogf/gf/v2/database/gdb"
 
-	"platform/services/commerce/internal/commerceerr"
-	"platform/services/commerce/internal/model"
-	"platform/services/commerce/internal/service"
+	"github.com/yueli-official/commerce/internal/commerceerr"
+	"github.com/yueli-official/commerce/internal/model"
+	"github.com/yueli-official/commerce/internal/service"
 )
 
 var errAssetSigningUnavailable = errors.New("asset signing unavailable")

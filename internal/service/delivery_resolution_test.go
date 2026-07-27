@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"platform/services/commerce/internal/model"
+	"github.com/yueli-official/commerce/internal/model"
 )
 
 func TestResolveAssetDeliveryUsesCurrentBundleForLatestPolicy(t *testing.T) {

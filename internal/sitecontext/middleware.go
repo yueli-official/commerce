@@ -6,7 +6,7 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 
 	foundationauth "github.com/yueli-official/foundation/go/auth"
-	"platform/services/commerce/internal/commerceerr"
+	"github.com/yueli-official/commerce/internal/commerceerr"
 )
 
 const (

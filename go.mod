@@ -1,4 +1,4 @@
-module platform/services/commerce
+module github.com/yueli-official/commerce
 
 go 1.25.12
 

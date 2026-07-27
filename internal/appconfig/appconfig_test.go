@@ -12,8 +12,8 @@ import (
 	"github.com/yueli-official/notification/client"
 	"github.com/yueli-official/commerce/paykit"
 	paydev "github.com/yueli-official/commerce/paykit/providers/dev"
-	"platform/services/commerce/internal/paymentcap"
-	"platform/services/commerce/internal/service"
+	"github.com/yueli-official/commerce/internal/paymentcap"
+	"github.com/yueli-official/commerce/internal/service"
 )
 
 func TestNotificationDeliverySenderSwallowsProviderFailure(t *testing.T) {

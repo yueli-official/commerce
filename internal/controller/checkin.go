@@ -4,9 +4,9 @@ import (
 	"context"
 
 	foundationauth "github.com/yueli-official/foundation/go/auth"
-	v1 "platform/services/commerce/api/v1"
-	"platform/services/commerce/internal/commerceerr"
-	"platform/services/commerce/internal/service"
+	v1 "github.com/yueli-official/commerce/api/v1"
+	"github.com/yueli-official/commerce/internal/commerceerr"
+	"github.com/yueli-official/commerce/internal/service"
 )
 
 // Checkin handles the daily check-in endpoints (user JWT required).

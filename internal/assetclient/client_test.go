@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"platform/services/commerce/internal/assetclient"
+	"github.com/yueli-official/commerce/internal/assetclient"
 )
 
 func TestClientCreateDeliveryMintsAssetGrant(t *testing.T) {

@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/yueli-official/commerce/paykit"
-	v1 "platform/services/commerce/api/v1"
-	"platform/services/commerce/internal/service"
+	v1 "github.com/yueli-official/commerce/api/v1"
+	"github.com/yueli-official/commerce/internal/service"
 )
 
 type PaymentConfig struct {

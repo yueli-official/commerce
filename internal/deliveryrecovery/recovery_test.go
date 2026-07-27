@@ -8,7 +8,7 @@ import (
 
 	"github.com/yueli-official/foundation/go/work"
 
-	"platform/services/commerce/internal/deliveryrecovery"
+	"github.com/yueli-official/commerce/internal/deliveryrecovery"
 )
 
 type memoryStore struct {

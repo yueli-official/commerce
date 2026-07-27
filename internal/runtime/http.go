@@ -9,7 +9,7 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 	goframeapi "github.com/yueli-official/foundation/go/goframe/api"
 	"github.com/yueli-official/foundation/go/goframe/ratelimit"
-	"platform/services/commerce/internal/commerceerr"
+	"github.com/yueli-official/commerce/internal/commerceerr"
 )
 
 const defaultRateLimitPerMinute = 600

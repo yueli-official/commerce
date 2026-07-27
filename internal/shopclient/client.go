@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	foundationhttpclient "github.com/yueli-official/foundation/go/httpclient"
-	commerceruntime "platform/services/commerce/internal/runtime"
+	commerceruntime "github.com/yueli-official/commerce/internal/runtime"
 )
 
 type Config struct {

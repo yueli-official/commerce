@@ -9,7 +9,7 @@ import (
 
 	"github.com/yueli-official/foundation/go/work"
 
-	"platform/services/commerce/internal/paymentrecovery"
+	"github.com/yueli-official/commerce/internal/paymentrecovery"
 )
 
 const (

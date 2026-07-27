@@ -24,13 +24,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/yueli-official/foundation/go/webhook"
 
-	"platform/services/commerce/internal/commerceerr"
-	"platform/services/commerce/internal/commercewebhook"
-	"platform/services/commerce/internal/dao"
-	"platform/services/commerce/internal/deliveryrecovery"
-	"platform/services/commerce/internal/model"
-	"platform/services/commerce/internal/paymentrecovery"
-	"platform/services/commerce/internal/recoveryops"
+	"github.com/yueli-official/commerce/internal/commerceerr"
+	"github.com/yueli-official/commerce/internal/commercewebhook"
+	"github.com/yueli-official/commerce/internal/dao"
+	"github.com/yueli-official/commerce/internal/deliveryrecovery"
+	"github.com/yueli-official/commerce/internal/model"
+	"github.com/yueli-official/commerce/internal/paymentrecovery"
+	"github.com/yueli-official/commerce/internal/recoveryops"
 )
 
 // OrderDesc carries the caller-supplied descriptor for a new order. SiteKey +

@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/yueli-official/commerce/paykit"
-	"platform/services/commerce/internal/model"
-	"platform/services/commerce/internal/paymentreconcile"
-	"platform/services/commerce/internal/paymentrecovery"
-	"platform/services/commerce/internal/service"
+	"github.com/yueli-official/commerce/internal/model"
+	"github.com/yueli-official/commerce/internal/paymentreconcile"
+	"github.com/yueli-official/commerce/internal/paymentrecovery"
+	"github.com/yueli-official/commerce/internal/service"
 )
 
 func TestPaymentObservationReplaysAndRepairsLocalCancellation(t *testing.T) {

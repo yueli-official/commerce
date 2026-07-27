@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"platform/services/commerce/internal/commerceerr"
+	"github.com/yueli-official/commerce/internal/commerceerr"
 )
 
 func TestCodesRegistered(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"platform/services/commerce/internal/service"
+	"github.com/yueli-official/commerce/internal/service"
 )
 
 type serviceTestCheckoutResolver struct{}

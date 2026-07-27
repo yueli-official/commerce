@@ -13,11 +13,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/yueli-official/foundation/go/audit"
 
-	"platform/services/commerce/internal/commerceaudit"
-	"platform/services/commerce/internal/deliveryrecovery"
-	"platform/services/commerce/internal/model"
-	"platform/services/commerce/internal/paymentrecovery"
-	"platform/services/commerce/internal/recoveryops"
+	"github.com/yueli-official/commerce/internal/commerceaudit"
+	"github.com/yueli-official/commerce/internal/deliveryrecovery"
+	"github.com/yueli-official/commerce/internal/model"
+	"github.com/yueli-official/commerce/internal/paymentrecovery"
+	"github.com/yueli-official/commerce/internal/recoveryops"
 )
 
 // PG wraps the GoFrame gdb handle.

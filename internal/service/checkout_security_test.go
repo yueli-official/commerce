@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"platform/services/commerce/internal/service"
+	"github.com/yueli-official/commerce/internal/service"
 )
 
 func TestCreateCheckoutRequiresCurrentCatalogResolver(t *testing.T) {

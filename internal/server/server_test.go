@@ -35,11 +35,11 @@ import (
 
 	"github.com/yueli-official/commerce/paykit"
 	foundationauth "github.com/yueli-official/foundation/go/auth"
-	"platform/services/commerce/internal/dao"
-	"platform/services/commerce/internal/model"
-	commerceruntime "platform/services/commerce/internal/runtime"
-	"platform/services/commerce/internal/server"
-	"platform/services/commerce/internal/service"
+	"github.com/yueli-official/commerce/internal/dao"
+	"github.com/yueli-official/commerce/internal/model"
+	commerceruntime "github.com/yueli-official/commerce/internal/runtime"
+	"github.com/yueli-official/commerce/internal/server"
+	"github.com/yueli-official/commerce/internal/service"
 )
 
 // ─── test constants ──────────────────────────────────────────────────────────

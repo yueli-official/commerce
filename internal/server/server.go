@@ -8,13 +8,13 @@ import (
 	"github.com/yueli-official/commerce/paykit"
 	foundationauth "github.com/yueli-official/foundation/go/auth"
 	"github.com/yueli-official/foundation/go/capability"
-	"platform/services/commerce/internal/controller"
-	"platform/services/commerce/internal/dao"
-	"platform/services/commerce/internal/paymentcap"
-	"platform/services/commerce/internal/paymentreconcile"
-	commerceruntime "platform/services/commerce/internal/runtime"
-	"platform/services/commerce/internal/service"
-	"platform/services/commerce/internal/sitecontext"
+	"github.com/yueli-official/commerce/internal/controller"
+	"github.com/yueli-official/commerce/internal/dao"
+	"github.com/yueli-official/commerce/internal/paymentcap"
+	"github.com/yueli-official/commerce/internal/paymentreconcile"
+	commerceruntime "github.com/yueli-official/commerce/internal/runtime"
+	"github.com/yueli-official/commerce/internal/service"
+	"github.com/yueli-official/commerce/internal/sitecontext"
 )
 
 // Deps are the wiring dependencies for the commerce server.

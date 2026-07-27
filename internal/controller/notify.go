@@ -8,8 +8,8 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 
 	"github.com/yueli-official/commerce/paykit"
-	"platform/services/commerce/internal/paymentrecovery"
-	"platform/services/commerce/internal/service"
+	"github.com/yueli-official/commerce/internal/paymentrecovery"
+	"github.com/yueli-official/commerce/internal/service"
 )
 
 const maxProviderNotifyBodyBytes = 1 << 20

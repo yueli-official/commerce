@@ -3,8 +3,8 @@ package controller
 import (
 	"context"
 
-	v1 "platform/services/commerce/api/v1"
-	"platform/services/commerce/internal/service"
+	v1 "github.com/yueli-official/commerce/api/v1"
+	"github.com/yueli-official/commerce/internal/service"
 )
 
 // DevSettle handles POST /dev/orders/{orderNo}/settle.

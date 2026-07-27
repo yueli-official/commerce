@@ -10,12 +10,12 @@ import (
 
 	"github.com/yueli-official/commerce/paykit"
 	foundationauth "github.com/yueli-official/foundation/go/auth"
-	v1 "platform/services/commerce/api/v1"
-	"platform/services/commerce/internal/commerceerr"
-	"platform/services/commerce/internal/model"
-	"platform/services/commerce/internal/paymentreconcile"
-	"platform/services/commerce/internal/service"
-	"platform/services/commerce/internal/sitecontext"
+	v1 "github.com/yueli-official/commerce/api/v1"
+	"github.com/yueli-official/commerce/internal/commerceerr"
+	"github.com/yueli-official/commerce/internal/model"
+	"github.com/yueli-official/commerce/internal/paymentreconcile"
+	"github.com/yueli-official/commerce/internal/service"
+	"github.com/yueli-official/commerce/internal/sitecontext"
 )
 
 type Checkout struct {

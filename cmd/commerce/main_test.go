@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/yueli-official/commerce/paykit"
-	"platform/services/commerce/internal/appconfig"
+	"github.com/yueli-official/commerce/internal/appconfig"
 )
 
 func TestBuildGatewayRegistryDoesNotRegisterStubsForDevSettle(t *testing.T) {

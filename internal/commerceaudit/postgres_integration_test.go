@@ -12,7 +12,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/yueli-official/foundation/go/audit"
 
-	"platform/services/commerce/internal/commerceaudit"
+	"github.com/yueli-official/commerce/internal/commerceaudit"
 )
 
 func TestPostgresHookSharesCallerTransaction(t *testing.T) {
