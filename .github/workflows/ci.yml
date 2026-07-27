@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: 校验模块依赖
+        env:
+          GOWORK: "off"
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: 运行测试
+        env:
+          GOWORK: "off"
+        run: go test ./...
+      - name: 检查错误目录
+        env:
+          GOWORK: "off"
+        run: go run ./cmd/errorcatalog --check
+      - name: 构建命令
+        env:
+          GOWORK: "off"
+        run: go build ./cmd/commerce ./cmd/errorcatalog
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 构建容器
+        run: docker build --tag commerce:ci .

@@ -46,9 +46,11 @@ Refund、Dispute 与 Asset grant；Dispute 只展示 provider 事实，不允许
 - `internal/service/`：订单、积分、权益、交付与退款领域行为。
 - `internal/paymentcap/`、`internal/paymentreconcile/`：支付能力和对账恢复。
 - `internal/commercewebhook/`、`internal/runtime/`：领域事件定义与服务级 Foundation 适配。
+- `paykit/`：Commerce 自有支付 provider 合同和适配器，与根 module 同版本发布。
 - `contracts/errors/`：11 项版本化公共错误合同。
 - `manifest/config/`：配置模板，真实配置被 Git 忽略。
 - `manifest/sql/migrations/`：唯一 schema 历史权威。
+- `Dockerfile`、`.github/workflows/ci.yml`：容器制品和独立仓持续门禁。
 
 ## 开发
 
